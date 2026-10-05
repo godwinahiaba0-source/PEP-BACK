@@ -69,9 +69,10 @@ const register = async (req, res, db) => {
         const newUserId = result.insertId;
 
         // ==========================================
-        // 7. ASSIGN LEVEL 0 FREE TRIAL DEVICE (24 HOURS)
+        // 7. ASSIGN LEVEL 0 FREE TRIAL (24 HOURS)
         // ==========================================
-        // Gives 0.25 every hour for 24 hours (tracked via payout_count)
+        // Gives 0.25 every hour for 24 hours. Stops automatically when expires_at passes 
+        // or when they purchase a new device.
         const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
         await connection.execute(
