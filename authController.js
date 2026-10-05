@@ -69,13 +69,15 @@ const register = async (req, res, db) => {
         const newUserId = result.insertId;
 
         // ==========================================
-        // 7. ASSIGN LEVEL 0 FREE TRIAL DEVICE
+        // 7. ASSIGN LEVEL 0 FREE TRIAL DEVICE (24 HOURS)
         // ==========================================
         // Gives 0.25 every hour for 24 hours (tracked via payout_count)
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
         await connection.execute(
-            `INSERT INTO user_devices (user_id, device_id, purchase_price, hourly_yield, status, payout_count) 
-             VALUES (?, 0, 0.00, 0.25, 'ACTIVE', 0)`,
-            [newUserId]
+            `INSERT INTO user_devices (user_id, device_id, purchase_price, hourly_yield, status, payout_count, expires_at) 
+             VALUES (?, 0, 0.00, 0.25, 'ACTIVE', 0, ?)`,
+            [newUserId, expiresAt]
         );
 
         // ==========================================
