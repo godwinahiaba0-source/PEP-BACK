@@ -10,6 +10,7 @@ const path = require('path');
 const { initDeviceWorker, buyDevice } = require('./deviceController');
 const { getTeamReport } = require('./teamController');
 const { register, login } = require('./authController'); 
+const adminRoutes = require('./adminRoutes'); // <--- Imported modular admin routes
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -58,6 +59,20 @@ function verifyToken(req, res, next) {
   });
 }
 
+// Admin Verification Middleware
+async function verifyAdmin(req, res, next) {
+  try {
+    const [rows] = await pool.query('SELECT is_admin FROM users WHERE user_id = ?', [req.user.id]);
+    if (rows.length === 0 || !rows[0].is_admin) {
+      return res.status(403).json({ success: false, message: 'Access denied: Admin privileges required' });
+    }
+    next();
+  } catch (err) {
+    console.error('Admin verification error:', err);
+    res.status(500).json({ success: false, message: 'Server error verifying admin status' });
+  }
+}
+
 // ==========================================
 // 0. AUTHENTICATION (Mounted from Controller)
 // ==========================================
@@ -89,7 +104,7 @@ app.get('/api/user/profile', verifyToken, async (req, res) => {
         vip_level: user.vip_level,
         avatar_url: user.avatar_url,
         balance: user.balance,
-        hasFundPassword: user.fund_password ? true : false // <--- Feeds the frontend badge status in fund passwd.html
+        hasFundPassword: user.fund_password ? true : false 
       } 
     });
   } catch (err) {
@@ -370,7 +385,7 @@ const handleWithdrawalRequest = async (req, res) => {
     try {
       await connection.beginTransaction();
 
-      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction || totalDeduction, req.user.id]);
+      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
       await connection.query(
         'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
         [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
@@ -397,167 +412,9 @@ app.post('/api/user/withdraw', verifyToken, handleWithdrawalRequest);
 app.post('/api/wallet/withdraw', verifyToken, handleWithdrawalRequest);
 
 // ==========================================
-// 9. ADMIN PANEL API ENDPOINTS
+// 9. ADMIN PANEL ROUTES (Mounted via adminRoutes.js)
 // ==========================================
-async function verifyAdmin(req, res, next) {
-  try {
-    const [rows] = await pool.query('SELECT is_admin FROM users WHERE user_id = ?', [req.user.id]);
-    if (rows.length === 0 || rows[0].is_admin !== 1) {
-      return res.status(403).json({ success: false, message: 'Access denied. Admin privileges required.' });
-    }
-    next();
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Authorization error' });
-  }
-}
-
-// Get overall platform statistics
-app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const [[{ totalUsers }]] = await pool.query('SELECT COUNT(*) as totalUsers FROM users');
-    const [[{ totalBalance }]] = await pool.query('SELECT SUM(balance) as totalBalance FROM users');
-    const [[{ pendingDeposits }]] = await pool.query('SELECT COUNT(*) as pendingDeposits FROM deposits WHERE status = "pending"');
-    const [[{ pendingWithdrawals }]] = await pool.query('SELECT COUNT(*) as pendingWithdrawals FROM withdrawals WHERE status = "pending"');
-
-    res.json({
-      success: true,
-      stats: {
-        totalUsers: totalUsers || 0,
-        totalBalance: totalBalance || 0.00,
-        pendingDeposits: pendingDeposits || 0,
-        pendingWithdrawals: pendingWithdrawals || 0
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to load stats' });
-  }
-});
-
-// Get all users list
-app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const [users] = await pool.query('SELECT user_id, phone, vip_level, balance, referral_rebate, created_at FROM users ORDER BY created_at DESC');
-    res.json({ success: true, users });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch users' });
-  }
-});
-
-// Get all deposits (Recharges)
-app.get('/api/admin/deposits', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const [deposits] = await pool.query(`
-      SELECT d.*, u.phone 
-      FROM deposits d 
-      JOIN users u ON d.user_id = u.user_id 
-      ORDER BY d.created_at DESC
-    `);
-    res.json({ success: true, deposits });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch deposits' });
-  }
-});
-
-// Approve or Reject Deposit
-app.post('/api/admin/deposits/action', verifyToken, verifyAdmin, async (req, res) => {
-  const { depositId, action } = req.body; // action: 'approve' or 'reject'
-  const connection = await pool.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
-    const [depRows] = await connection.query('SELECT * FROM deposits WHERE id = ?', [depositId]);
-    if (depRows.length === 0) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Deposit record not found' });
-    }
-
-    const deposit = depRows[0];
-    if (deposit.status !== 'pending') {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Deposit is already processed' });
-    }
-
-    if (action === 'approve') {
-      // Update deposit status
-      await connection.query('UPDATE deposits SET status = "approved" WHERE id = ?', [depositId]);
-      // Add balance to user
-      await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [deposit.amount, deposit.user_id]);
-      // Record transaction ledger
-      await connection.query(
-        'INSERT INTO transactions (user_id, title, description, type, amount, status) VALUES (?, "Recharge Approved", ?, "credit", ?, "completed")',
-        [deposit.user_id, `Deposit via ${deposit.channel} approved`, deposit.amount]
-      );
-    } else {
-      await connection.query('UPDATE deposits SET status = "rejected" WHERE id = ?', [depositId]);
-    }
-
-    await connection.commit();
-    connection.release();
-    res.json({ success: true, message: `Deposit successfully ${action}d` });
-  } catch (err) {
-    await connection.rollback();
-    connection.release();
-    res.status(500).json({ success: false, message: 'Server error processing action' });
-  }
-});
-
-// Get all withdrawals
-app.get('/api/admin/withdrawals', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const [withdrawals] = await pool.query(`
-      SELECT w.*, u.phone 
-      FROM withdrawals w 
-      JOIN users u ON w.user_id = u.user_id 
-      ORDER BY w.created_at DESC
-    `);
-    res.json({ success: true, withdrawals });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch withdrawals' });
-  }
-});
-
-// Approve or Reject Withdrawal
-app.post('/api/admin/withdrawals/action', verifyToken, verifyAdmin, async (req, res) => {
-  const { withdrawalId, action } = req.body; // action: 'approve' or 'reject'
-  const connection = await pool.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
-    const [wRows] = await connection.query('SELECT * FROM withdrawals WHERE id = ?', [withdrawalId]);
-    if (wRows.length === 0) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Withdrawal record not found' });
-    }
-
-    const withdrawal = wRows[0];
-    if (withdrawal.status !== 'pending') {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Withdrawal is already processed' });
-    }
-
-    if (action === 'approve') {
-      await connection.query('UPDATE withdrawals SET status = "approved" WHERE id = ?', [withdrawalId]);
-      await connection.query(
-        'INSERT INTO transactions (user_id, title, description, type, amount, status) VALUES (?, "Withdrawal Paid", ?, "debit", ?, "completed")',
-        [withdrawal.user_id, `Withdrawal via ${withdrawal.method} processed`, withdrawal.amount]
-      );
-    } else {
-      // If rejected, refund the balance back to the user
-      await connection.query('UPDATE withdrawals SET status = "rejected" WHERE id = ?', [withdrawalId]);
-      await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [withdrawal.amount, withdrawal.user_id]);
-    }
-
-    await connection.commit();
-    connection.release();
-    res.json({ success: true, message: `Withdrawal successfully ${action}d` });
-  } catch (err) {
-    await connection.rollback();
-    connection.release();
-    res.status(500).json({ success: false, message: 'Server error processing action' });
-  }
-});
+app.use('/api', adminRoutes(pool, verifyToken, verifyAdmin, bcrypt));
 
 // Start Server
 app.listen(PORT, () => {

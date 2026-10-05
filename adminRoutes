@@ -1,0 +1,311 @@
+const express = require('express');
+
+module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
+  const router = express.Router();
+
+  // ==========================================
+  // 1. STATS & OVERVIEW ENDPOINT
+  // ==========================================
+  router.get('/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+      const [userCount] = await pool.query('SELECT COUNT(*) as count FROM users');
+      const [totalDeps] = await pool.query('SELECT SUM(amount) as total FROM deposits WHERE status = "approved"');
+      const [totalWds] = await pool.query('SELECT SUM(gross_amount) as total FROM withdrawals WHERE status = "approved"');
+      
+      let totalWithdrawals = totalWds[0].total;
+      if (totalWithdrawals === null) {
+        const [altWds] = await pool.query('SELECT SUM(amount) as total FROM withdrawals WHERE status = "approved"');
+        totalWithdrawals = altWds[0].total || 0;
+      }
+
+      res.json({
+        success: true,
+        stats: {
+          totalUsers: userCount[0].count || 0,
+          totalDeposits: totalDeps[0].total || 0,
+          totalWithdrawals: totalWithdrawals
+        }
+      });
+    } catch (err) {
+      console.error('Stats error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch dashboard stats' });
+    }
+  });
+
+
+  // ==========================================
+  // 2. NOTICE SYSTEM ENDPOINTS
+  // ==========================================
+  let globalNotice = { message: '' };
+
+  router.get('/notice', async (req, res) => {
+    res.json({ success: true, notice: globalNotice });
+  });
+
+  router.post('/admin/notice', verifyToken, verifyAdmin, async (req, res) => {
+    const { message } = req.body;
+    globalNotice = { message: message || '' };
+    res.json({ success: true, message: message ? 'Broadcast notice updated successfully' : 'Notice cleared' });
+  });
+
+
+  // ==========================================
+  // 3. RECHARGE (DEPOSIT) MANAGEMENT ENDPOINTS
+  // ==========================================
+  router.get('/admin/recharges', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+      const [recharges] = await pool.query(`
+        SELECT d.*, u.phone 
+        FROM deposits d 
+        JOIN users u ON d.user_id = u.user_id 
+        ORDER BY d.created_at DESC
+      `);
+      res.json({ success: true, recharges });
+    } catch (err) {
+      console.error('Fetch recharges error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch recharge data' });
+    }
+  });
+
+  router.post('/admin/recharges/action', verifyToken, verifyAdmin, async (req, res) => {
+    const { transactionId, action } = req.body;
+    const connection = await pool.getConnection();
+    
+    try {
+      await connection.beginTransaction();
+
+      const [txs] = await connection.query('SELECT * FROM deposits WHERE id = ?', [transactionId]);
+      if (txs.length === 0) {
+        await connection.release();
+        return res.status(404).json({ success: false, message: 'Recharge transaction not found' });
+      }
+
+      const tx = txs[0];
+      if (tx.status !== 'pending') {
+        await connection.release();
+        return res.status(400).json({ success: false, message: 'Transaction is already processed' });
+      }
+
+      const newStatus = action === 'approve' ? 'approved' : 'rejected';
+      await connection.query('UPDATE deposits SET status = ? WHERE id = ?', [newStatus, transactionId]);
+
+      if (action === 'approve') {
+        await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [tx.amount, tx.user_id]);
+      }
+
+      await connection.commit();
+      connection.release();
+
+      res.json({ success: true, message: `Recharge successfully ${newStatus}` });
+    } catch (err) {
+      await connection.rollback();
+      connection.release();
+      console.error('Recharge action error:', err);
+      res.status(500).json({ success: false, message: 'Server error processing recharge action' });
+    }
+  });
+
+
+  // ==========================================
+  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS
+  // ==========================================
+  router.get('/admin/withdrawals', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+      const [withdrawals] = await pool.query(`
+        SELECT w.*, u.phone 
+        FROM withdrawals w 
+        JOIN users u ON w.user_id = u.user_id 
+        ORDER BY w.created_at DESC
+      `);
+      res.json({ success: true, withdrawals });
+    } catch (err) {
+      console.error('Fetch withdrawals error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch withdrawals' });
+    }
+  });
+
+  router.post('/admin/withdrawals/action', verifyToken, verifyAdmin, async (req, res) => {
+    const { transactionId, action } = req.body;
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const [txs] = await connection.query('SELECT * FROM withdrawals WHERE id = ?', [transactionId]);
+      if (txs.length === 0) {
+        await connection.release();
+        return res.status(404).json({ success: false, message: 'Withdrawal transaction not found' });
+      }
+
+      const tx = txs[0];
+      if (tx.status !== 'pending') {
+        await connection.release();
+        return res.status(400).json({ success: false, message: 'Withdrawal is already processed' });
+      }
+
+      const newStatus = action === 'approve' ? 'approved' : 'rejected';
+      await connection.query('UPDATE withdrawals SET status = ? WHERE id = ?', [newStatus, transactionId]);
+
+      if (action === 'reject') {
+        const refundAmount = tx.gross_amount || tx.amount || 0;
+        await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [refundAmount, tx.user_id]);
+      }
+
+      await connection.commit();
+      connection.release();
+
+      res.json({ success: true, message: `Withdrawal successfully ${newStatus}` });
+    } catch (err) {
+      await connection.rollback();
+      connection.release();
+      console.error('Withdrawal action error:', err);
+      res.status(500).json({ success: false, message: 'Server error processing withdrawal action' });
+    }
+  });
+
+
+  // ==========================================
+  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS
+  // ==========================================
+  router.get('/admin/users', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+      const [users] = await pool.query(`
+        SELECT 
+          u.user_id as id, 
+          u.phone, 
+          u.balance, 
+          u.vip_level, 
+          u.status, 
+          u.is_deleted,
+          (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id) as total_referrals,
+          (SELECT COUNT(*) FROM users ref JOIN deposits d ON ref.user_id = d.user_id WHERE ref.invited_by = u.user_id AND d.status = 'approved') as deposited_referrals,
+          (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id AND ref.user_id NOT IN (SELECT DISTINCT user_id FROM deposits WHERE status = 'approved')) as non_deposited_referrals
+        FROM users u
+        ORDER BY u.user_id DESC
+      `);
+      res.json({ success: true, users });
+    } catch (err) {
+      console.error('Fetch users error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch users list' });
+    }
+  });
+
+  router.post('/admin/users/toggle-withdrawal', verifyToken, verifyAdmin, async (req, res) => {
+    const { userId, enabled } = req.body;
+    try {
+      await pool.query('UPDATE users SET withdrawals_enabled = ? WHERE user_id = ?', [enabled, userId]);
+      res.json({ success: true, message: `User withdrawals successfully ${enabled === 1 ? 'enabled' : 'disabled'}.` });
+    } catch (err) {
+      console.error('Toggle withdrawal error:', err);
+      res.status(500).json({ success: false, message: 'Database error updating withdrawal status.' });
+    }
+  });
+
+  router.post('/admin/users/action', verifyToken, verifyAdmin, async (req, res) => {
+    const { userId, action } = req.body;
+    try {
+      const statusVal = action === 'delete' ? 'deleted' : 'active';
+      const isDeletedVal = action === 'delete' ? 1 : 0;
+      
+      await pool.query('UPDATE users SET status = ?, is_deleted = ? WHERE user_id = ?', [statusVal, isDeletedVal, userId]);
+      res.json({ success: true, message: `User account successfully ${action}d.` });
+    } catch (err) {
+      console.error('User action error:', err);
+      res.status(500).json({ success: false, message: 'Database error modifying user status.' });
+    }
+  });
+
+  router.post('/admin/users/balance', verifyToken, verifyAdmin, async (req, res) => {
+    const { phone, type, amount } = req.body;
+    try {
+      const operator = type === 'add' ? '+' : '-';
+      const [result] = await pool.query(`UPDATE users SET balance = balance ${operator} ? WHERE phone = ?`, [amount, phone]);
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: 'User phone number not found.' });
+      }
+
+      res.json({ success: true, message: 'User balance updated successfully.' });
+    } catch (err) {
+      console.error('Balance adjustment error:', err);
+      res.status(500).json({ success: false, message: 'Failed to adjust user balance.' });
+    }
+  });
+
+  router.post('/admin/bankcard/reset', verifyToken, verifyAdmin, async (req, res) => {
+    const { userId, phone } = req.body;
+    try {
+      let targetUserId = userId;
+      if (!targetUserId && phone) {
+        const [users] = await pool.query('SELECT user_id FROM users WHERE phone = ?', [phone]);
+        if (users.length > 0) targetUserId = users[0].user_id;
+      }
+
+      if (!targetUserId) {
+        return res.status(404).json({ success: false, message: 'User not found.' });
+      }
+
+      await pool.query('UPDATE users SET channel_type = NULL, channel_number = NULL, official_name = NULL WHERE user_id = ?', [targetUserId]);
+      await pool.query('DELETE FROM bank_cards WHERE user_id = ?', [targetUserId]);
+
+      res.json({ success: true, message: 'Payment account details reset successfully.' });
+    } catch (err) {
+      console.error('Bank reset error:', err);
+      res.status(500).json({ success: false, message: 'Failed to reset bank card details.' });
+    }
+  });
+
+  router.post('/admin/users/reset-password', verifyToken, verifyAdmin, async (req, res) => {
+    const { userId, phone, newPassword } = req.body;
+    try {
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+      let query = '';
+      let params = [];
+
+      if (userId) {
+        query = 'UPDATE users SET password = ? WHERE user_id = ?';
+        params = [hashedPassword, userId];
+      } else if (phone) {
+        query = 'UPDATE users SET password = ? WHERE phone = ?';
+        params = [hashedPassword, phone];
+      } else {
+        return res.status(400).json({ success: false, message: 'User identifier required.' });
+      }
+
+      const [result] = await pool.query(query, params);
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: 'User not found.' });
+      }
+
+      res.json({ success: true, message: 'User password reset successfully.' });
+    } catch (err) {
+      console.error('Password reset error:', err);
+      res.status(500).json({ success: false, message: 'Failed to reset user password.' });
+    }
+  });
+
+  router.get('/admin/users/:userId/referrals', verifyToken, verifyAdmin, async (req, res) => {
+    const { userId } = req.params;
+    try {
+      const [tree] = await pool.query(`
+        SELECT 
+          u.user_id as id, 
+          u.phone, 
+          u.balance, 
+          1 as level,
+          (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE user_id = u.user_id AND status = 'approved') as total_deposited
+        FROM users u 
+        WHERE u.invited_by = ?
+      `, [userId]);
+
+      res.json({ success: true, tree });
+    } catch (err) {
+      console.error('Referral tree error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch referral tree downlines.' });
+    }
+  });
+
+  return router;
+};
