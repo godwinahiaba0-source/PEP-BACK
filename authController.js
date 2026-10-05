@@ -14,7 +14,11 @@ const register = async (req, res, db) => {
     try {
         await connection.beginTransaction();
 
-        // 1. Check if user already exists
+        // 1. Check total user count to see if this is the very first account
+        const [countResult] = await connection.execute(`SELECT COUNT(*) as total FROM users`);
+        const userCount = countResult[0].total;
+
+        // 2. Check if user already exists
         const [existingUser] = await connection.execute(
             `SELECT user_id FROM users WHERE phone = ?`, 
             [phone]
@@ -23,9 +27,12 @@ const register = async (req, res, db) => {
             throw new Error('Phone number already registered');
         }
 
-        // 2. Resolve Referrer ID if a referral code was provided
+        // 3. Resolve Referrer ID (Bypassed if this is the first user in an empty database)
         let referrerId = null;
-        if (referralCode) {
+        if (userCount > 0) {
+            if (!referralCode) {
+                throw new Error('Invitation code is required');
+            }
             const [referrerRows] = await connection.execute(
                 `SELECT user_id FROM users WHERE referral_code = ?`,
                 [referralCode]
@@ -36,7 +43,7 @@ const register = async (req, res, db) => {
             referrerId = referrerRows[0].user_id;
         }
 
-        // 3. Generate a unique 6-digit referral code for the new user
+        // 4. Generate a unique 6-digit referral code for the new user
         let newReferralCode;
         let isUnique = false;
         while (!isUnique) {
@@ -50,11 +57,11 @@ const register = async (req, res, db) => {
             }
         }
 
-        // 4. Hash the password
+        // 5. Hash the password
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash(password, salt);
 
-        // 5. Insert the new user into the database with their generated referral code
+        // 6. Insert the new user into the database with their generated referral code
         const [result] = await connection.execute(
             `INSERT INTO users (phone, password_hash, balance, vip_level, referral_code) VALUES (?, ?, 0.00, 0, ?)`,
             [phone, passwordHash, newReferralCode]
@@ -62,9 +69,9 @@ const register = async (req, res, db) => {
         const newUserId = result.insertId;
 
         // ==========================================
-        // 6. ASSIGN LEVEL 0 FREE TRIAL DEVICE
+        // 7. ASSIGN LEVEL 0 FREE TRIAL DEVICE
         // ==========================================
-        // Gives 0.25 every hour for 24 hours (tracked via payout_count)[cite: 14]
+        // Gives 0.25 every hour for 24 hours (tracked via payout_count)
         await connection.execute(
             `INSERT INTO user_devices (user_id, device_id, purchase_price, hourly_yield, status, payout_count) 
              VALUES (?, 0, 0.00, 0.25, 'ACTIVE', 0)`,
@@ -72,7 +79,7 @@ const register = async (req, res, db) => {
         );
 
         // ==========================================
-        // 7. HANDLE MULTI-LEVEL REFERRAL NETWORK
+        // 8. HANDLE MULTI-LEVEL REFERRAL NETWORK
         // ==========================================
         if (referrerId) {
             // Level 1: Direct upline
