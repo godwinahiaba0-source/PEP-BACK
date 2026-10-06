@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 
-// Setup the hourly cron job worker (Runs 24/7 with 3-Level Hourly Commissions)
+// Setup the hourly cron job worker (Runs 24/7 with VIP 0 Free Payouts, Device Yields & 3-Level Hourly Commissions)
 function initDeviceWorker(db) {
     cron.schedule('0 * * * *', async () => {
         console.log('⏰ Running hourly yield payout & referral commission worker...');
@@ -9,13 +9,54 @@ function initDeviceWorker(db) {
         try {
             await connection.beginTransaction();
 
-            // 1. Fetch all active devices
+            // ==========================================
+            // 1. PROCESS VIP LEVEL 0 FREE CREDITS (0.25 / hour for 24 hours)
+            // ==========================================
+            const [vipZeroUsers] = await connection.execute(
+                `SELECT ud.user_device_id, ud.user_id, ud.hourly_yield, ud.created_at
+                 FROM user_devices ud
+                 JOIN users u ON ud.user_id = u.user_id
+                 WHERE u.vip_level = 0 
+                   AND ud.status = 'ACTIVE'
+                   AND TIMESTAMPDIFF(HOUR, ud.created_at, NOW()) < 24`
+            );
+
+            for (const device of vipZeroUsers) {
+                const earnings = parseFloat(device.hourly_yield || 0.25);
+
+                // Credit user balance
+                await connection.execute(
+                    `UPDATE users SET balance = balance + ? WHERE user_id = ?`,
+                    [earnings, device.user_id]
+                );
+
+                // Log transaction
+                await connection.execute(
+                    `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'EARNING', ?)`,
+                    [device.user_id, earnings]
+                ).catch(() => {});
+            }
+
+            // Expire VIP 0 free devices older than 24 hours
+            await connection.execute(
+                `UPDATE user_devices ud
+                 JOIN users u ON ud.user_id = u.user_id
+                 SET ud.status = 'EXPIRED'
+                 WHERE u.vip_level = 0 
+                   AND ud.status = 'ACTIVE'
+                   AND TIMESTAMPDIFF(HOUR, ud.created_at, NOW()) >= 24`
+            );
+
+            // ==========================================
+            // 2. PROCESS PAID DEVICES & 3-LEVEL HOURLY COMMISSIONS
+            // ==========================================
             const [activeDevices] = await connection.execute(
                 `SELECT ud.user_device_id, ud.user_id, ud.hourly_yield, 
                         COALESCE(vd.id, 0) as device_tier_id
                  FROM user_devices ud 
+                 JOIN users u ON ud.user_id = u.user_id
                  LEFT JOIN vip_devices vd ON ud.device_id = vd.id
-                 WHERE ud.status = 'ACTIVE'`
+                 WHERE u.vip_level > 0 AND ud.status = 'ACTIVE'`
             );
 
             for (const device of activeDevices) {
@@ -79,7 +120,7 @@ function initDeviceWorker(db) {
             }
 
             await connection.commit();
-            console.log(`✅ Processed payouts & commissions for ${activeDevices.length} devices.`);
+            console.log(`✅ Processed payouts & commissions for ${vipZeroUsers.length} VIP 0 users and ${activeDevices.length} paid devices.`);
         } catch (error) {
             await connection.rollback();
             console.error('❌ Payout & Commission error:', error);
