@@ -256,11 +256,11 @@ app.get('/api/accounting', verifyToken, async (req, res) => {
 app.post('/api/auth/change-password', verifyToken, async (req, res) => {
   const { oldPassword, newPassword } = req.body;
   try {
-    const [users] = await pool.query('SELECT password FROM users WHERE user_id = ?', [req.user.id]);
+    const [users] = await pool.query('SELECT password_hash FROM users WHERE user_id = ?', [req.user.id]);
     if (users.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
 
     const user = users[0];
-    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
     if (!isMatch) {
       return res.status(400).json({ success: false, message: 'Incorrect old password' });
     }
@@ -268,7 +268,7 @@ app.post('/api/auth/change-password', verifyToken, async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    await pool.query('UPDATE users SET password = ? WHERE user_id = ?', [hashedPassword, req.user.id]);
+    await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [hashedPassword, req.user.id]);
     res.json({ success: true, message: 'Password updated successfully!' });
   } catch (err) {
     console.error(err);
@@ -288,10 +288,10 @@ app.post('/api/auth/set-fund-password', verifyToken, async (req, res) => {
   }
 
   try {
-    const [users] = await pool.query('SELECT password FROM users WHERE user_id = ?', [req.user.id]);
+    const [users] = await pool.query('SELECT password_hash FROM users WHERE user_id = ?', [req.user.id]);
     if (users.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
 
-    const isMatch = await bcrypt.compare(accountPassword, users[0].password);
+    const isMatch = await bcrypt.compare(accountPassword, users[0].password_hash);
     if (!isMatch) {
       return res.status(400).json({ success: false, message: 'Incorrect account login password' });
     }
@@ -396,7 +396,7 @@ const handleWithdrawalRequest = async (req, res) => {
     try {
       await connection.beginTransaction();
 
-      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDextion = totalDeduction, req.user.id]);
+      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
       await connection.query(
         'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
         [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
