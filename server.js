@@ -152,6 +152,16 @@ app.post('/api/user/update-avatar', verifyToken, async (req, res) => {
 // ==========================================
 // 2. DEVICE MANAGEMENT (Mounted from Controller)
 // ==========================================
+app.get('/api/devices', verifyToken, async (req, res) => {
+  try {
+    const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
+    res.json({ success: true, devices });
+  } catch (err) {
+    console.error('Error fetching devices:', err);
+    res.status(500).json({ success: false, message: 'Error loading devices' });
+  }
+});
+
 app.get('/api/devices/list', verifyToken, async (req, res) => {
   try {
     const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices');
