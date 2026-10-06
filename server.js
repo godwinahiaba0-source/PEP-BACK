@@ -316,11 +316,11 @@ app.get('/api/recharge/config', verifyToken, async (req, res) => {
     res.json({
       success: true,
       exchangeRate: 12.5,
-      usdtAddress: process.env.USDT_WALLET_ADDRESS || 'TYourUSDTWalletAddressHere...',
-      kbNumber: process.env.KB_NUMBER || '0590000000',
-      kbName: process.env.KB_NAME || 'Platform Merchant',
-      solNumber: process.env.SOL_NUMBER || '0540000000',
-      solName: process.env.SOL_NAME || 'Platform Merchant'
+      usdtAddress: process.env.USDT_WALLET_ADDRESS || 'TByjYGQHM4H29bngfATXPyQSepdfSKEABn',
+      kbNumber: process.env.KB_NUMBER || '0599432374',
+      kbName: process.env.KB_NAME || 'MATHIAS KOFI LUMOR',
+      solNumber: process.env.SOL_NUMBER || '0502835489',
+      solName: process.env.SOL_NAME || 'GIDEON ODURO YEBOAH'
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to load recharge configuration' });
