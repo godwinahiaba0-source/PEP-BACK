@@ -61,10 +61,10 @@ const register = async (req, res, db) => {
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash(password, salt);
 
-        // 6. Insert the new user into the database with their generated referral code
+        // 6. Insert the new user into the database with their generated referral code & referrerId
         const [result] = await connection.execute(
-            `INSERT INTO users (phone, password_hash, balance, vip_level, referral_code) VALUES (?, ?, 0.00, 0, ?)`,
-            [phone, passwordHash, newReferralCode]
+            `INSERT INTO users (phone, password_hash, balance, vip_level, referral_code, invited_by) VALUES (?, ?, 0.00, 0, ?, ?)`,
+            [phone, passwordHash, newReferralCode, referrerId]
         );
         const newUserId = result.insertId;
 
@@ -121,7 +121,7 @@ const register = async (req, res, db) => {
         await connection.commit();
         res.status(201).json({ 
             success: true, 
-            message: 'Account created successfully with Level 0 Free Trial active!',
+            message: 'Account created successfully',
             userId: newUserId,
             referralCode: newReferralCode
         });
