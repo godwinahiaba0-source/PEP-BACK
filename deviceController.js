@@ -19,6 +19,8 @@ function initDeviceWorker(db) {
             );
 
             for (const device of activeDevices) {
+                if (!device.user_id || device.hourly_yield == null) continue;
+
                 // Credit base hourly yield to device owner
                 await connection.execute(
                     `UPDATE users SET balance = balance + ? WHERE user_id = ?`,
@@ -89,7 +91,18 @@ function initDeviceWorker(db) {
 
 // Handle device purchase logic & Instant Referral Rebates & VIP Level Update
 const buyDevice = async (req, res, db) => {
-    const { userId, deviceId } = req.body;
+    // Safely retrieve userId from auth middleware (req.user) or fallback to body
+    const userId = req.user?.id || req.user?.userId || req.body.userId;
+    // Support both device_id (sent by frontend) and deviceId
+    const deviceId = req.body.device_id || req.body.deviceId;
+
+    if (!userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized: User ID missing from token' });
+    }
+    if (!deviceId) {
+        return res.status(400).json({ success: false, message: 'Device ID is required' });
+    }
+
     const connection = await db.getConnection();
 
     try {
@@ -146,14 +159,12 @@ const buyDevice = async (req, res, db) => {
         // ==========================================
         // 5. MULTI-LEVEL INSTANT REFERRAL REBATES
         // ==========================================
-        // Level 1 = 10%, Level 2 = 5%, Level 3 = 3%[cite: 11]
         const rebateRates = {
             1: 0.10,
             2: 0.05,
             3: 0.03
         };
 
-        // Fetch Level 1, 2, and 3 uplines from the team_referrals table
         const [uplines] = await connection.execute(
             `SELECT ancestor_user_id, level FROM team_referrals WHERE descendant_user_id = ? AND level IN (1, 2, 3)`,
             [userId]
@@ -165,7 +176,6 @@ const buyDevice = async (req, res, db) => {
             const rate = rebateRates[level] || 0;
 
             if (rate > 0) {
-                // Check upline's maximum purchased device price
                 const [uplineDevices] = await connection.execute(
                     `SELECT COALESCE(MAX(d.price), 0) as max_price 
                      FROM user_devices ud 
@@ -175,17 +185,14 @@ const buyDevice = async (req, res, db) => {
                 );
                 const uplineMaxDevicePrice = parseFloat(uplineDevices[0].max_price || 0);
 
-                // CONDITION: Upline max purchased device must be >= downline device price
                 if (uplineMaxDevicePrice >= devicePrice) {
                     const rebateAmount = devicePrice * rate;
 
-                    // Credit balance and accumulate referral_rebate[cite: 12]
                     await connection.execute(
                         `UPDATE users SET balance = balance + ?, referral_rebate = referral_rebate + ? WHERE user_id = ?`,
                         [rebateAmount, rebateAmount, uplineId]
                     );
 
-                    // Log the referral rebate transaction
                     await connection.execute(
                         `INSERT INTO transactions (user_id, type, amount, description) VALUES (?, 'REFERRAL_REBATE', ?, ?)`,
                         [uplineId, rebateAmount, `Level ${level} referral rebate from device purchase`]
