@@ -28,8 +28,8 @@ function initDeviceWorker(db) {
                 );
 
                 await connection.execute(
-                    `INSERT INTO transactions (user_id, type, amount, description) VALUES (?, 'EARNING', ?, ?)`,
-                    [device.user_id, device.hourly_yield, `Hourly payout: device #${device.user_device_id}`]
+                    `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'EARNING', ?)`,
+                    [device.user_id, device.hourly_yield]
                 );
 
                 // ==========================================
@@ -66,8 +66,8 @@ function initDeviceWorker(db) {
                             [commissionAmount, upline.user_id]
                         );
                         await connection.execute(
-                            `INSERT INTO transactions (user_id, type, amount, description) VALUES (?, 'COMMISSION', ?, ?)`,
-                            [upline.user_id, commissionAmount, `Level ${level + 1} hourly commission`]
+                            `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'COMMISSION', ?)`,
+                            [upline.user_id, commissionAmount]
                         );
                     } else {
                         await connection.execute(
@@ -91,9 +91,7 @@ function initDeviceWorker(db) {
 
 // Handle device purchase logic & Instant Referral Rebates & VIP Level Update
 const buyDevice = async (req, res, db) => {
-    // Safely retrieve userId from auth middleware (req.user) or fallback to body
     const userId = req.user?.id || req.user?.userId || req.body.userId;
-    // Support both device_id (sent by frontend) and deviceId
     const deviceId = req.body.device_id || req.body.deviceId;
 
     if (!userId) {
@@ -152,8 +150,8 @@ const buyDevice = async (req, res, db) => {
         );
 
         await connection.execute(
-            `INSERT INTO transactions (user_id, type, amount, description) VALUES (?, 'BUY_DEVICE', ?, ?)`,
-            [userId, devicePrice, `Purchased device ${device.name}`]
+            `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'BUY_DEVICE', ?)`,
+            [userId, devicePrice]
         );
 
         // ==========================================
@@ -194,8 +192,8 @@ const buyDevice = async (req, res, db) => {
                     );
 
                     await connection.execute(
-                        `INSERT INTO transactions (user_id, type, amount, description) VALUES (?, 'REFERRAL_REBATE', ?, ?)`,
-                        [uplineId, rebateAmount, `Level ${level} referral rebate from device purchase`]
+                        `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'REFERRAL_REBATE', ?)`,
+                        [uplineId, rebateAmount]
                     );
                 }
             }
