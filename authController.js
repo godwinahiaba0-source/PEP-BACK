@@ -64,7 +64,7 @@ const register = async (req, res, db) => {
         // 6. Insert the new user into the database with their generated referral code & referrerId
         const [result] = await connection.execute(
             `INSERT INTO users (phone, password_hash, balance, vip_level, referral_code, invited_by) VALUES (?, ?, 0.00, 0, ?, ?)`,
-            [phone, passwordHash, newReferralCode, referralCode]
+            [phone, passwordHash, newReferralCode, referrerId]
         );
         const newUserId = result.insertId;
 
