@@ -396,7 +396,7 @@ const handleWithdrawalRequest = async (req, res) => {
     try {
       await connection.beginTransaction();
 
-      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
+      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDextion = totalDeduction, req.user.id]);
       await connection.query(
         'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
         [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
