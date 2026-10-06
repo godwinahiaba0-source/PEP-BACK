@@ -10,15 +10,14 @@ function initDeviceWorker(db) {
             await connection.beginTransaction();
 
             // ==========================================
-            // 1. PROCESS VIP LEVEL 0 FREE CREDITS (0.25 / hour for 24 hours)
+            // 1. PROCESS VIP LEVEL 0 FREE CREDITS (Clean query without created_at)
             // ==========================================
             const [vipZeroUsers] = await connection.execute(
-                `SELECT ud.user_device_id, ud.user_id, ud.hourly_yield, ud.created_at
+                `SELECT ud.user_device_id, ud.user_id, ud.hourly_yield
                  FROM user_devices ud
                  JOIN users u ON ud.user_id = u.user_id
                  WHERE u.vip_level = 0 
-                   AND ud.status = 'ACTIVE'
-                   AND TIMESTAMPDIFF(HOUR, ud.created_at, NOW()) < 24`
+                   AND ud.status = 'ACTIVE'`
             );
 
             for (const device of vipZeroUsers) {
@@ -36,16 +35,6 @@ function initDeviceWorker(db) {
                     [device.user_id, earnings]
                 ).catch(() => {});
             }
-
-            // Expire VIP 0 free devices older than 24 hours
-            await connection.execute(
-                `UPDATE user_devices ud
-                 JOIN users u ON ud.user_id = u.user_id
-                 SET ud.status = 'EXPIRED'
-                 WHERE u.vip_level = 0 
-                   AND ud.status = 'ACTIVE'
-                   AND TIMESTAMPDIFF(HOUR, ud.created_at, NOW()) >= 24`
-            );
 
             // ==========================================
             // 2. PROCESS PAID DEVICES & 3-LEVEL HOURLY COMMISSIONS
