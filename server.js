@@ -90,7 +90,7 @@ app.post('/api/auth/login', (req, res) => {
 app.get('/api/user/profile', verifyToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT user_id, phone, vip_level, avatar_url, balance, fund_password FROM users WHERE user_id = ?', 
+      'SELECT user_id, phone, vip_level, avatar_url, balance, fund_password, referral_code FROM users WHERE user_id = ?', 
       [req.user.id]
     );
     if (rows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
@@ -104,7 +104,8 @@ app.get('/api/user/profile', verifyToken, async (req, res) => {
         vip_level: user.vip_level,
         avatar_url: user.avatar_url,
         balance: user.balance,
-        hasFundPassword: user.fund_password ? true : false 
+        hasFundPassword: user.fund_password ? true : false,
+        referral_code: user.referral_code
       } 
     });
   } catch (err) {
