@@ -4,33 +4,29 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
-const multer = require('multer'); // <--- Required for parsing screenshot uploads
-const path = require('path');
+const multer = require('multer');
 
 const { initDeviceWorker, buyDevice } = require('./deviceController');
 const { getTeamReport } = require('./teamController');
 const { register, login } = require('./authController'); 
-const adminRoutes = require('./adminRoutes'); // <--- Imported modular admin routes
+const adminRoutes = require('./adminRoutes');
+const userRoutes = require('./userRoutes'); // <--- Imported modular user routes
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
-// Configure Multer storage for receipt / proof uploads
+// Configure Multer storage
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/'); // Ensure this folder exists or change destination as needed
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage: storage });
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads')); // Serve uploaded files statically if needed
+app.use('/uploads', express.static('uploads'));
 
 // SQL Database Pool Connection
 const pool = mysql.createPool({
@@ -43,7 +39,7 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-// Initialize the 24/7 hourly background payout worker
+// Initialize background workers
 initDeviceWorker(pool);
 
 // Authentication Middleware
@@ -68,363 +64,40 @@ async function verifyAdmin(req, res, next) {
     }
     next();
   } catch (err) {
-    console.error('Admin verification error:', err);
     res.status(500).json({ success: false, message: 'Server error verifying admin status' });
   }
 }
 
 // ==========================================
-// 0. AUTHENTICATION (Mounted from Controller)
+// MOUNT MODULED ROUTES
 // ==========================================
-app.post('/api/auth/register', (req, res) => {
-  register(req, res, pool);
-});
 
-app.post('/api/auth/login', (req, res) => {
-  login(req, res, pool, JWT_SECRET);
-});
+// Auth Routes
+app.post('/api/auth/register', (req, res) => register(req, res, pool));
+app.post('/api/auth/login', (req, res) => login(req, res, pool, JWT_SECRET));
 
-// ==========================================
-// 1. USER PROFILE & ACCOUNT SUMMARY
-// ==========================================
-app.get('/api/user/profile', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT user_id, phone, vip_level, avatar_url, balance, fund_password, referral_code FROM users WHERE user_id = ?', 
-      [req.user.id]
-    );
-    if (rows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
-    
-    const user = rows[0];
-    res.json({ 
-      success: true, 
-      user: {
-        id: user.user_id,
-        phone: user.phone,
-        vip_level: user.vip_level,
-        avatar_url: user.avatar_url,
-        balance: user.balance,
-        hasFundPassword: user.fund_password ? true : false,
-        referral_code: user.referral_code
-      } 
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Server database error' });
-  }
-});
-
-app.get('/api/user/account-summary', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT balance, referral_rebate, vip_level FROM users WHERE user_id = ?', [req.user.id]);
-    const user = rows.length > 0 ? rows[0] : { balance: 0.00, referral_rebate: 0.00, vip_level: 0 };
-
-    res.json({
-      success: true,
-      data: {
-        balance: user.balance,
-        vipLevel: user.vip_level,
-        yesterdayEarnings: 0.00,
-        investmentBenefits: 0.00,
-        todayEarnings: 0.00,
-        teamBenefits: 0.00,
-        thisWeekEarnings: 0.00,
-        referralRebate: user.referral_rebate,
-        thisMonthEarnings: 0.00
-      }
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-app.post('/api/user/update-avatar', verifyToken, async (req, res) => {
-  const { avatar } = req.body;
-  try {
-    await pool.query('UPDATE users SET avatar_url = ? WHERE user_id = ?', [avatar, req.user.id]);
-    res.json({ success: true, message: 'Avatar updated successfully' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to update avatar' });
-  }
-});
-
-// ==========================================
-// 2. DEVICE MANAGEMENT (Mounted from Controller)
-// ==========================================
+// Device Routes
 app.get('/api/devices', verifyToken, async (req, res) => {
-  try {
-    const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
-    res.json({ success: true, devices });
-  } catch (err) {
-    console.error('Error fetching devices:', err);
-    res.status(500).json({ success: false, message: 'Error loading devices' });
-  }
+  const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
+  res.json({ success: true, devices });
 });
-
 app.get('/api/devices/list', verifyToken, async (req, res) => {
-  try {
-    const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices');
-    res.json({ success: true, data: devices });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error loading devices' });
-  }
+  const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices');
+  res.json({ success: true, data: devices });
 });
-
 app.get('/api/devices/my-devices', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT user_device_id, device_id, hourly_yield, status FROM user_devices WHERE user_id = ?', [req.user.id]);
-    res.json({ success: true, data: rows });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error loading user devices' });
-  }
+  const [rows] = await pool.query('SELECT user_device_id, device_id, hourly_yield, status FROM user_devices WHERE user_id = ?', [req.user.id]);
+  res.json({ success: true, data: rows });
 });
+app.post('/api/devices/buy', verifyToken, (req, res) => { req.body.userId = req.user.id; buyDevice(req, res, pool); });
 
-app.post('/api/devices/buy', verifyToken, (req, res) => {
-  req.body.userId = req.user.id;
-  buyDevice(req, res, pool);
-});
+// Team Report Route
+app.get('/api/team/report', verifyToken, (req, res) => getTeamReport(req, res, pool));
 
-// ==========================================
-// 3. TEAM REPORT & METRICS (Mounted from Controller)
-// ==========================================
-app.get('/api/team/report', verifyToken, (req, res) => {
-  getTeamReport(req, res, pool);
-});
+// User Profiles, Bank Cards, Accounting, Recharges, & Withdrawals (Modularized)
+app.use('/api', userRoutes(pool, verifyToken, upload));
 
-// ==========================================
-// 4. BANK CARD / WITHDRAWAL ACCOUNTS
-// ==========================================
-app.get('/api/bankcard', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT channel, official_name, account_number FROM bank_cards WHERE user_id = ?', [req.user.id]);
-    if (rows.length === 0) {
-      return res.json({ success: true, card: null });
-    }
-    res.json({ success: true, card: rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error fetching bank card' });
-  }
-}); 
-
-app.get('/api/user/bank-card', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT channel, official_name, account_number FROM bank_cards WHERE user_id = ?', [req.user.id]);
-    if (rows.length === 0) {
-      return res.json({ success: true, card: null });
-    }
-    res.json({ success: true, card: rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error fetching bank card' });
-  }
-});
-
-app.post('/api/bankcard', verifyToken, async (req, res) => {
-  const { channel, official_name, account_number } = req.body;
-  try {
-    await pool.query(
-      'REPLACE INTO bank_cards (user_id, channel, official_name, account_number) VALUES (?, ?, ?, ?)',
-      [req.user.id, channel, official_name, account_number]
-    );
-    res.json({ success: true, message: 'Withdrawal account bound successfully!' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Failed to bind account' });
-  }
-});
-
-// ==========================================
-// 5. ACCOUNTING RECORDS (accounting.html)
-// ==========================================
-app.get('/api/accounting', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT id, title, description, type, amount, status, created_at FROM transactions WHERE user_id = ? ORDER BY created_at DESC', 
-      [req.user.id]
-    ).catch(() => [[]]); 
-
-    res.json({ success: true, records: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Failed to load accounting records' });
-  }
-});
-
-// ==========================================
-// 6. PASSWORD & FUND PASSWORD MANAGEMENT
-// ==========================================
-app.post('/api/auth/change-password', verifyToken, async (req, res) => {
-  const { oldPassword, newPassword } = req.body;
-  try {
-    const [users] = await pool.query('SELECT password_hash FROM users WHERE user_id = ?', [req.user.id]);
-    if (users.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
-
-    const user = users[0];
-    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
-    if (!isMatch) {
-      return res.status(400).json({ success: false, message: 'Incorrect old password' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [hashedPassword, req.user.id]);
-    res.json({ success: true, message: 'Password updated successfully!' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Server error updating password' });
-  }
-});
-
-app.post('/api/auth/set-fund-password', verifyToken, async (req, res) => {
-  const { accountPassword, fundPassword, confirmFundPassword } = req.body;
-
-  if (!fundPassword || !/^\d{4,6}$/.test(fundPassword)) {
-    return res.status(400).json({ success: false, message: 'Fund password must be 4 to 6 numeric digits.' });
-  }
-
-  if (fundPassword !== confirmFundPassword) {
-    return res.status(400).json({ success: false, message: 'Fund passwords do not match.' });
-  }
-
-  try {
-    const [users] = await pool.query('SELECT password_hash FROM users WHERE user_id = ?', [req.user.id]);
-    if (users.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
-
-    const isMatch = await bcrypt.compare(accountPassword, users[0].password_hash);
-    if (!isMatch) {
-      return res.status(400).json({ success: false, message: 'Incorrect account login password' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedFundPassword = await bcrypt.hash(fundPassword, salt);
-
-    await pool.query('UPDATE users SET fund_password = ? WHERE user_id = ?', [hashedFundPassword, req.user.id]);
-
-    res.json({ success: true, message: 'Fund password updated successfully!' });
-  } catch (err) {
-    console.error('Error setting fund password:', err);
-    res.status(500).json({ success: false, message: 'Server database error' });
-  }
-});
-
-// ==========================================
-// 7. RECHARGE & PAYMENT GATEWAYS (recharge.html)
-// ==========================================
-app.get('/api/recharge/config', verifyToken, async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      exchangeRate: 12.5,
-      usdtAddress: process.env.USDT_WALLET_ADDRESS || 'TByjYGQHM4H29bngfATXPyQSepdfSKEABn',
-      kbNumber: process.env.KB_NUMBER || '0599432374',
-      kbName: process.env.KB_NAME || 'MATHIAS KOFI LUMOR',
-      solNumber: process.env.SOL_NUMBER || '0502835489',
-      solName: process.env.SOL_NAME || 'GIDEON ODURO YEBOAH'
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to load recharge configuration' });
-  }
-});
-
-app.post('/api/recharge/submit', verifyToken, async (req, res) => {
-  const { amount, channel, transactionId, reference } = req.body;
-  try {
-    await pool.query(
-      'INSERT INTO deposits (user_id, amount, channel, transaction_id, reference, status, created_at) VALUES (?, ?, ?, ?, ?, "pending", NOW())',
-      [req.user.id, amount, channel, transactionId || '', reference || '']
-    ).catch(() => {});
-
-    res.json({ success: true, message: 'Recharge request submitted successfully. Awaiting approval.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Failed to process recharge submission' });
-  }
-});
-
-app.post('/api/recharge/submit-with-proof', verifyToken, upload.single('proofImage'), async (req, res) => {
-  const { amount, channel, transactionId } = req.body;
-  const proofPath = req.file ? `/uploads/${req.file.filename}` : '';
-
-  try {
-    await pool.query(
-      'INSERT INTO deposits (user_id, amount, channel, transaction_id, proof_image, status, created_at) VALUES (?, ?, ?, ?, ?, "pending", NOW())',
-      [req.user.id, amount, channel, transactionId || '', proofPath]
-    ).catch(() => {});
-
-    const [userRows] = await pool.query('SELECT balance FROM users WHERE user_id = ?', [req.user.id]);
-    const newBalance = userRows.length > 0 ? userRows[0].balance : 0;
-
-    res.json({ success: true, message: 'Deposit proof uploaded successfully!', newBalance });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Failed to upload deposit proof' });
-  }
-});
-
-// ==========================================
-// 8. WITHDRAWALS (withdraw.html & wrec.html)
-// ==========================================
-app.get('/api/withdraw/history', verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT id, amount, net_amount, method, status, created_at FROM withdrawals WHERE user_id = ? ORDER BY created_at DESC',
-      [req.user.id]
-    ).catch(() => [[]]);
-
-    res.json({ success: true, history: rows });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch withdrawal history' });
-  }
-});
-
-const handleWithdrawalRequest = async (req, res) => {
-  const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber } = req.body;
-  
-  try {
-    const [userRows] = await pool.query('SELECT balance FROM users WHERE user_id = ?', [req.user.id]);
-    if (userRows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
-    
-    const currentBalance = userRows[0].balance;
-    const totalDeduction = parseFloat(amount);
-
-    if (currentBalance < totalDeduction) {
-      return res.status(400).json({ success: false, message: 'Insufficient balance for withdrawal' });
-    }
-
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
-
-      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
-      await connection.query(
-        'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
-        [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
-      );
-
-      await connection.commit();
-      connection.release();
-
-      res.json({ success: true, message: 'Withdrawal request submitted successfully!' });
-    } catch (txErr) {
-      await connection.rollback();
-      connection.release();
-      throw txErr;
-    }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'Server error processing withdrawal' });
-  }
-};
-
-app.post('/api/withdraw/request', verifyToken, handleWithdrawalRequest);
-app.post('/api/withdraw/submit', verifyToken, handleWithdrawalRequest);
-app.post('/api/user/withdraw', verifyToken, handleWithdrawalRequest);
-app.post('/api/wallet/withdraw', verifyToken, handleWithdrawalRequest);
-
-// ==========================================
-// 9. ADMIN PANEL ROUTES (Mounted via adminRoutes.js)
-// ==========================================
+// Admin Panel Routes
 app.use('/api', adminRoutes(pool, verifyToken, verifyAdmin, bcrypt));
 
 // Start Server
