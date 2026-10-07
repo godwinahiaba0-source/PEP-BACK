@@ -29,9 +29,9 @@ function initDeviceWorker(db) {
                     [earnings, device.user_id]
                 );
 
-                // Log transaction
+                // Log transaction with proper fields for accounting display
                 await connection.execute(
-                    `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'EARNING', ?)`,
+                    `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Hourly Yield', 'Free VIP 0 device yield payout', 'yield', ?, 'success', NOW())`,
                     [device.user_id, earnings]
                 ).catch(() => {});
             }
@@ -58,7 +58,7 @@ function initDeviceWorker(db) {
                 );
 
                 await connection.execute(
-                    `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'EARNING', ?)`,
+                    `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Device Yield', 'Hourly VIP device payout', 'yield', ?, 'success', NOW())`,
                     [device.user_id, device.hourly_yield]
                 );
 
@@ -96,7 +96,7 @@ function initDeviceWorker(db) {
                             [commissionAmount, upline.user_id]
                         );
                         await connection.execute(
-                            `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'COMMISSION', ?)`,
+                            `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Team Commission', 'Level ${level + 1} hourly team commission', 'commission', ?, 'success', NOW())`,
                             [upline.user_id, commissionAmount]
                         );
                     } else {
@@ -179,9 +179,10 @@ const buyDevice = async (req, res, db) => {
             [newVipLevel, userId]
         );
 
+        // Log purchase as a debit transaction (negative amount) so accounting.html marks it red
         await connection.execute(
-            `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'BUY_DEVICE', ?)`,
-            [userId, devicePrice]
+            `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Device Purchase', 'Purchased VIP device: ${device.name}', 'BUY_DEVICE', ?, 'success', NOW())`,
+            [userId, -devicePrice]
         );
 
         // ==========================================
@@ -222,7 +223,7 @@ const buyDevice = async (req, res, db) => {
                     );
 
                     await connection.execute(
-                        `INSERT INTO transactions (user_id, type, amount) VALUES (?, 'REFERRAL_REBATE', ?)`,
+                        `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Referral Rebate', 'Level ${level} referral rebate from device purchase', 'REFERRAL_REBATE', ?, 'success', NOW())`,
                         [uplineId, rebateAmount]
                     );
                 }
