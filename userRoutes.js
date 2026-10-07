@@ -34,21 +34,68 @@ function userRoutes(pool, verifyToken, upload) {
 
   router.get('/user/account-summary', verifyToken, async (req, res) => {
     try {
-      const [rows] = await pool.query('SELECT balance, referral_rebate, vip_level FROM users WHERE user_id = ?', [req.user.id]);
+      const userId = req.user.id;
+
+      // Get user basic info
+      const [rows] = await pool.query('SELECT balance, referral_rebate, vip_level FROM users WHERE user_id = ?', [userId]);
       const user = rows.length > 0 ? rows[0] : { balance: 0.00, referral_rebate: 0.00, vip_level: 0 };
+
+      // Calculate Today's Earnings
+      const [todayRows] = await pool.query(
+        `SELECT SUM(amount) AS total FROM transactions 
+         WHERE user_id = ? AND type IN ('yield', 'device_payout', 'payout') 
+         AND DATE(created_at) = CURDATE()`,
+        [userId]
+      ).catch(() => [{ total: 0 }]);
+      const todayEarnings = todayRows[0]?.total || 0.00;
+
+      // Calculate Yesterday's Earnings
+      const [yesterdayRows] = await pool.query(
+        `SELECT SUM(amount) AS total FROM transactions 
+         WHERE user_id = ? AND type IN ('yield', 'device_payout', 'payout') 
+         AND DATE(created_at) = CURDATE() - INTERVAL 1 DAY`,
+        [userId]
+      ).catch(() => [{ total: 0 }]);
+      const yesterdayEarnings = yesterdayRows[0]?.total || 0.00;
+
+      // Calculate This Week's Earnings
+      const [weekRows] = await pool.query(
+        `SELECT SUM(amount) AS total FROM transactions 
+         WHERE user_id = ? AND type IN ('yield', 'device_payout', 'payout') 
+         AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`,
+        [userId]
+      ).catch(() => [{ total: 0 }]);
+      const thisWeekEarnings = weekRows[0]?.total || 0.00;
+
+      // Calculate This Month's Earnings
+      const [monthRows] = await pool.query(
+        `SELECT SUM(amount) AS total FROM transactions 
+         WHERE user_id = ? AND type IN ('yield', 'device_payout', 'payout') 
+         AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())`,
+        [userId]
+      ).catch(() => [{ total: 0 }]);
+      const thisMonthEarnings = monthRows[0]?.total || 0.00;
+
+      // Calculate Total Investment Benefits (all-time device payouts)
+      const [investmentRows] = await pool.query(
+        `SELECT SUM(amount) AS total FROM transactions 
+         WHERE user_id = ? AND type IN ('yield', 'device_payout', 'payout')`,
+        [userId]
+      ).catch(() => [{ total: 0 }]);
+      const investmentBenefits = investmentRows[0]?.total || 0.00;
 
       res.json({
         success: true,
         data: {
           balance: user.balance,
           vipLevel: user.vip_level,
-          yesterdayEarnings: 0.00,
-          investmentBenefits: 0.00,
-          todayEarnings: 0.00,
+          yesterdayEarnings: parseFloat(yesterdayEarnings).toFixed(2),
+          investmentBenefits: parseFloat(investmentBenefits).toFixed(2),
+          todayEarnings: parseFloat(todayEarnings).toFixed(2),
           teamBenefits: 0.00,
-          thisWeekEarnings: 0.00,
+          thisWeekEarnings: parseFloat(thisWeekEarnings).toFixed(2),
           referralRebate: user.referral_rebate,
-          thisMonthEarnings: 0.00
+          thisMonthEarnings: parseFloat(thisMonthEarnings).toFixed(2)
         }
       });
     } catch (err) {
@@ -241,7 +288,7 @@ function userRoutes(pool, verifyToken, upload) {
       try {
         await connection.beginTransaction();
 
-        await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
+        await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDinnedCollection = totalDeduction, req.user.id]);
         await connection.query(
           'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
           [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
