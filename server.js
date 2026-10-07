@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const http = require('http'); // <--- Required for Socket.io
+const { Server } = require('socket.io'); // <--- Required for Socket.io
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -10,9 +12,17 @@ const { initDeviceWorker, buyDevice } = require('./deviceController');
 const { getTeamReport } = require('./teamController');
 const { register, login } = require('./authController'); 
 const adminRoutes = require('./adminRoutes');
-const userRoutes = require('./userRoutes'); // <--- Imported modular user routes
+const userRoutes = require('./userRoutes');
 
 const app = express();
+const server = http.createServer(app); // <--- Create HTTP server
+const io = new Server(server, {
+  cors: { origin: '*' }
+});
+
+// Make io globally accessible for your admin routes
+global.io = io;
+
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
@@ -55,18 +65,16 @@ function verifyToken(req, res, next) {
   });
 }
 
-// Admin Verification Middleware
+// Admin Verification Middleware (Checks the 'admins' table for username/id)
 async function verifyAdmin(req, res, next) {
   try {
-    // Check if the logged-in admin exists in the 'admins' table by username or id
-    const adminIdentifier = req.user.username || req.user.id;
+    const adminIdentifier = req.user.username || req.user.id || req.user.user_id;
     const [rows] = await pool.query('SELECT * FROM admins WHERE username = ? OR id = ?', [adminIdentifier, adminIdentifier]);
     
     if (rows.length === 0) {
       return res.status(403).json({ success: false, message: 'Access denied: Admin privileges required' });
     }
     
-    // Attach admin info to request if needed
     req.admin = rows[0];
     next();
   } catch (err) {
@@ -74,6 +82,13 @@ async function verifyAdmin(req, res, next) {
     res.status(500).json({ success: false, message: 'Server error verifying admin status' });
   }
 }
+
+// Socket.io connection handling for real-time admin updates
+io.on('connection', (socket) => {
+  socket.on('join_admin_room', () => {
+    socket.join('admin_room');
+  });
+});
 
 // ==========================================
 // MOUNT MODULED ROUTES
@@ -107,7 +122,7 @@ app.use('/api', userRoutes(pool, verifyToken, upload));
 // Admin Panel Routes
 app.use('/api', adminRoutes(pool, verifyToken, verifyAdmin, bcrypt));
 
-// Start Server
-app.listen(PORT, () => {
+// Start Server using `server.listen` instead of `app.listen`
+server.listen(PORT, () => {
   console.log(`🚀 Server running locally on port ${PORT}`);
 });
