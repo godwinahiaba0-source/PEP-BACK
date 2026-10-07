@@ -58,12 +58,19 @@ function verifyToken(req, res, next) {
 // Admin Verification Middleware
 async function verifyAdmin(req, res, next) {
   try {
-    const [rows] = await pool.query('SELECT is_admin FROM users WHERE user_id = ?', [req.user.id]);
-    if (rows.length === 0 || !rows[0].is_admin) {
+    // Check if the logged-in admin exists in the 'admins' table by username or id
+    const adminIdentifier = req.user.username || req.user.id;
+    const [rows] = await pool.query('SELECT * FROM admins WHERE username = ? OR id = ?', [adminIdentifier, adminIdentifier]);
+    
+    if (rows.length === 0) {
       return res.status(403).json({ success: false, message: 'Access denied: Admin privileges required' });
     }
+    
+    // Attach admin info to request if needed
+    req.admin = rows[0];
     next();
   } catch (err) {
+    console.error('Admin verification error:', err);
     res.status(500).json({ success: false, message: 'Server error verifying admin status' });
   }
 }
