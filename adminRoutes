@@ -4,6 +4,71 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   const router = express.Router();
 
   // ==========================================
+  // 0. USER SUBMISSION ENDPOINTS (WITH SOCKET.IO BROADCAST)
+  // ==========================================
+  router.post('/user/deposit', async (req, res) => {
+    try {
+      const { userId, phone, amount, channel, transactionId, reference, proofImage } = req.body;
+      
+      const query = `INSERT INTO deposits (user_id, phone, amount, channel, transaction_id, reference, proof_image, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`;
+      const [result] = await pool.query(query, [userId, phone, amount, channel, transactionId, reference, proofImage]);
+      
+      const newDepositId = result.insertId;
+
+      // Broadcast real-time event to Admin Panel
+      if (global.io) {
+        global.io.to('admin_room').emit('new_recharge_received', {
+          id: newDepositId,
+          userId,
+          phone,
+          amount,
+          channel,
+          transaction_id: transactionId,
+          proof_image: proofImage,
+          status: 'pending'
+        });
+      }
+
+      res.json({ success: true, message: 'Deposit request submitted successfully.' });
+    } catch (err) {
+      console.error('User deposit error:', err);
+      res.status(500).json({ success: false, message: 'Database error saving deposit.' });
+    }
+  });
+
+  router.post('/user/withdraw', async (req, res) => {
+    try {
+      const { userId, phone, amount, fee, netAmount, method, accountInfo } = req.body;
+      
+      const query = `INSERT INTO withdrawals (user_id, phone, amount, fee, net_amount, method, account_info, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`;
+      const [result] = await pool.query(query, [userId, phone, amount, fee, netAmount, method, accountInfo]);
+
+      const newWithdrawalId = result.insertId;
+
+      // Broadcast real-time event to Admin Panel
+      if (global.io) {
+        global.io.to('admin_room').emit('new_withdrawal_received', {
+          id: newWithdrawalId,
+          userId,
+          phone,
+          amount,
+          fee,
+          net_amount: netAmount,
+          method,
+          account_info: accountInfo,
+          status: 'pending'
+        });
+      }
+
+      res.json({ success: true, message: 'Withdrawal request submitted successfully.' });
+    } catch (err) {
+      console.error('User withdrawal error:', err);
+      res.status(500).json({ success: false, message: 'Database error saving withdrawal.' });
+    }
+  });
+
+
+  // ==========================================
   // 1. STATS & OVERVIEW ENDPOINT
   // ==========================================
   router.get('/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
