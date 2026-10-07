@@ -15,6 +15,15 @@ const adminRoutes = require('./adminRoutes');
 const userRoutes = require('./userRoutes');
 
 const app = express();
+
+// 1. Enable full CORS & preflight handling right at the top
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors());
+
 const server = http.createServer(app); // <--- Create HTTP server
 const io = new Server(server, {
   cors: { origin: '*' }
@@ -34,7 +43,6 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
