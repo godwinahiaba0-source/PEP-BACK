@@ -73,13 +73,26 @@ function verifyToken(req, res, next) {
   });
 }
 
-// Admin Verification Middleware (Checks the 'admins' table for username/id)
 async function verifyAdmin(req, res, next) {
   try {
-    const adminIdentifier = req.user.username || req.user.id || req.user.user_id;
-    const [rows] = await pool.query('SELECT * FROM admins WHERE username = ? OR id = ?', [adminIdentifier, adminIdentifier]);
+    // 1. Log the decoded token to see what keys/values are inside
+    console.log("Decoded Token (req.user):", req.user);
+    
+    const identifier = req.user.username || req.user.id || req.user.user_id || req.user.adminId;
+    
+    if (!identifier) {
+      console.log("No valid admin identifier found in token payload.");
+      return res.status(403).json({ success: false, message: 'Access denied: No identifier in token' });
+    }
+
+    // 2. Query checking multiple possible column names in your 'admins' table
+    const [rows] = await pool.query(
+      'SELECT * FROM admins WHERE username = ? OR id = ? OR name = ?', 
+      [identifier, identifier, identifier]
+    );
     
     if (rows.length === 0) {
+      console.log(`Admin not found in database for identifier: ${identifier}`);
       return res.status(403).json({ success: false, message: 'Access denied: Admin privileges required' });
     }
     
@@ -90,13 +103,6 @@ async function verifyAdmin(req, res, next) {
     res.status(500).json({ success: false, message: 'Server error verifying admin status' });
   }
 }
-
-// Socket.io connection handling for real-time admin updates
-io.on('connection', (socket) => {
-  socket.on('join_admin_room', () => {
-    socket.join('admin_room');
-  });
-});
 
 // ==========================================
 // MOUNT MODULED ROUTES
