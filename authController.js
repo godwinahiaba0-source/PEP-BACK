@@ -1,24 +1,24 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-// Helper function to generate a random 6-digit referral code (e.g., 849201)
+// Helper function to generate a random 6-digit referral code (e.g., 849201)[cite: 15]
 function generateReferralCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Register a new user and assign a unique referral code & Level 0 Free Trial Device
+// Register a new user and assign a unique referral code & Level 0 Free Trial Device[cite: 15]
 const register = async (req, res, db) => {
-    const { phone, password, referralCode } = req.body; // referralCode entered during signup
+    const { phone, password, referralCode } = req.body; // referralCode entered during signup[cite: 15]
     const connection = await db.getConnection();
 
     try {
         await connection.beginTransaction();
 
-        // 1. Check total user count to see if this is the very first account
+        // 1. Check total user count to see if this is the very first account[cite: 15]
         const [countResult] = await connection.execute(`SELECT COUNT(*) as total FROM users`);
         const userCount = countResult[0].total;
 
-        // 2. Check if user already exists
+        // 2. Check if user already exists[cite: 15]
         const [existingUser] = await connection.execute(
             `SELECT user_id FROM users WHERE phone = ?`, 
             [phone]
@@ -27,7 +27,7 @@ const register = async (req, res, db) => {
             throw new Error('Phone number already registered');
         }
 
-        // 3. Resolve Referrer ID (Bypassed if this is the first user in an empty database)
+        // 3. Resolve Referrer ID (Bypassed if this is the first user in an empty database)[cite: 15]
         let referrerId = null;
         if (userCount > 0) {
             if (!referralCode) {
@@ -43,7 +43,7 @@ const register = async (req, res, db) => {
             referrerId = referrerRows[0].user_id;
         }
 
-        // 4. Generate a unique 6-digit referral code for the new user
+        // 4. Generate a unique 6-digit referral code for the new user[cite: 15]
         let newReferralCode;
         let isUnique = false;
         while (!isUnique) {
@@ -57,11 +57,11 @@ const register = async (req, res, db) => {
             }
         }
 
-        // 5. Hash the password
+        // 5. Hash the password[cite: 15]
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash(password, salt);
 
-        // 6. Insert the new user into the database with their generated referral code & referrerId
+        // 6. Insert the new user into the database with their generated referral code & referrerId[cite: 15]
         const [result] = await connection.execute(
             `INSERT INTO users (phone, password_hash, balance, vip_level, referral_code, invited_by) VALUES (?, ?, 0.00, 0, ?, ?)`,
             [phone, passwordHash, newReferralCode, referrerId]
@@ -69,10 +69,10 @@ const register = async (req, res, db) => {
         const newUserId = result.insertId;
 
         // ==========================================
-        // 7. ASSIGN LEVEL 0 FREE TRIAL (24 HOURS)
+        // 7. ASSIGN LEVEL 0 FREE TRIAL (24 HOURS)[cite: 15]
         // ==========================================
         // Gives 0.25 every hour for 24 hours. Stops automatically when expires_at passes 
-        // or when they purchase a new device.
+        // or when they purchase a new device.[cite: 15]
         const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
         await connection.execute(
@@ -82,16 +82,16 @@ const register = async (req, res, db) => {
         );
 
         // ==========================================
-        // 8. HANDLE MULTI-LEVEL REFERRAL NETWORK
+        // 8. HANDLE MULTI-LEVEL REFERRAL NETWORK[cite: 15]
         // ==========================================
         if (referrerId) {
-            // Level 1: Direct upline
+            // Level 1: Direct upline[cite: 15]
             await connection.execute(
                 `INSERT INTO team_referrals (ancestor_user_id, descendant_user_id, level) VALUES (?, ?, 1)`,
                 [referrerId, newUserId]
             );
 
-            // Level 2: Find Level 1's upline
+            // Level 2: Find Level 1's upline[cite: 15]
             const [level1Rows] = await connection.execute(
                 `SELECT ancestor_user_id FROM team_referrals WHERE descendant_user_id = ? AND level = 1`,
                 [referrerId]
@@ -103,7 +103,7 @@ const register = async (req, res, db) => {
                     [level2Ancestor, newUserId]
                 );
 
-                // Level 3: Find Level 2's upline
+                // Level 3: Find Level 2's upline[cite: 15]
                 const [level2Rows] = await connection.execute(
                     `SELECT ancestor_user_id FROM team_referrals WHERE descendant_user_id = ? AND level = 1`,
                     [level2Ancestor]
@@ -135,7 +135,7 @@ const register = async (req, res, db) => {
     }
 };
 
-// Login user
+// Login user (Fixed token assignment)[cite: 15]
 const login = async (req, res, db, JWT_SECRET) => {
     const { phone, password } = req.body;
     try {
@@ -154,4 +154,23 @@ const login = async (req, res, db, JWT_SECRET) => {
     }
 };
 
-module.exports = { register, login };
+// Dedicated Admin Login (Authenticates against the admins table for GeniusAdmin)[cite: 15]
+const adminLogin = async (req, res, db, JWT_SECRET) => {
+    const { username, password } = req.body;
+    try {
+        const [admins] = await db.query('SELECT * FROM admins WHERE username = ?', [username]);
+        if (admins.length === 0) return res.status(400).json({ success: false, message: 'Invalid admin credentials' });
+
+        const admin = admins[0];
+        const isMatch = await bcrypt.compare(password, admin.password);
+        if (!isMatch) return res.status(400).json({ success: false, message: 'Invalid admin credentials' });
+
+        const token = jwt.sign({ id: admin.id, username: admin.username }, JWT_SECRET, { expiresIn: '1d' });
+        res.json({ success: true, token });
+    } catch (err) {
+        console.error('Admin login error:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+module.exports = { register, login, adminLogin };
