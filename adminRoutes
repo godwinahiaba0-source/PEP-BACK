@@ -75,7 +75,8 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     try {
       const [userCount] = await pool.query('SELECT COUNT(*) as count FROM users');
       const [totalDeps] = await pool.query('SELECT SUM(amount) as total FROM deposits WHERE status = "approved"');
-      const [totalWds] = await pool.query('SELECT SUM(gross_amount) as total FROM withdrawals WHERE status = "approved"');
+      // Updated code using 'amount'
+const [result] = await pool.query('SELECT SUM(amount) as total FROM withdrawals WHERE status = "approved"');
       
       let totalWithdrawals = totalWds[0].total;
       if (totalWithdrawals === null) {
