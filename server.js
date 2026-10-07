@@ -10,7 +10,7 @@ const multer = require('multer');
 
 const { initDeviceWorker, buyDevice } = require('./deviceController');
 const { getTeamReport } = require('./teamController');
-const { register, login } = require('./authController'); 
+const { register, login, adminLogin } = require('./authController'); 
 const adminRoutes = require('./adminRoutes');
 const userRoutes = require('./userRoutes');
 
@@ -105,7 +105,7 @@ async function verifyAdmin(req, res, next) {
 
 app.post('/api/auth/register', (req, res) => register(req, res, pool));
 app.post('/api/auth/login', (req, res) => login(req, res, pool, JWT_SECRET));
-
+app.post('/api/auth/admin-login', (req, res) => adminLogin(req, res, pool, JWT_SECRET));
 app.get('/api/devices', verifyToken, async (req, res) => {
   try {
     const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
