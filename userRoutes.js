@@ -168,7 +168,7 @@ function userRoutes(pool, verifyToken, upload) {
            category, 
            type, 
            amount, 
-           status, 
+           'Completed' AS status, 
            payment_channel, 
            reference_code, 
            created_at 
