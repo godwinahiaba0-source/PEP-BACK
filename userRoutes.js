@@ -232,10 +232,10 @@ app.get('/api/notice', async (req, res) => {
            transaction_id AS id, 
            CASE 
              WHEN LOWER(type) IN ('commission', 'referral_rebate') OR LOWER(title) LIKE '%commission%' 
-               THEN CONCAT('Hourly commission (', COALESCE(transaction_id), ')')
+               THEN CONCAT('Hourly commission (', COALESCE(reference_code, transaction_id), ')')
              WHEN LOWER(type) IN ('yield', 'device_payout', 'payout', 'earning', 'device_earning') OR LOWER(title) LIKE '%earning%' OR LOWER(title) LIKE '%yield%' 
-               THEN CONCAT('Device hourly Income (', COALESCE(transaction_id), ')')
-             ELSE CONCAT(COALESCE(title, type), ' (', COALESCE(transaction_id), ')')
+               THEN CONCAT('Device hourly Income (', COALESCE(reference_code, transaction_id), ')')
+             ELSE CONCAT(COALESCE(title, type), ' (', COALESCE(reference_code, transaction_id), ')')
            END AS title,
            category, 
            type, 
