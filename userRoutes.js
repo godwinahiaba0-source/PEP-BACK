@@ -127,70 +127,46 @@ function userRoutes(pool, verifyToken, upload) {
   });
   
 
-  // 3. ACCOUNTING RECORDS (Unified across transactions, deposits, and withdrawals)
+  // 3. ACCOUNTING RECORDS (With error logging)
   router.get('/accounting', verifyToken, async (req, res) => {
     try {
       const userId = req.user.id;
+      console.log('Fetching accounting for user_id:', userId);
 
-      // 1. Fetch from transactions table
       const [txRows] = await pool.query(
-        `SELECT 
-           transaction_id AS id, 
-           COALESCE(title, type) AS title,
-           category, 
-           type, 
-           amount, 
-           COALESCE(status, 'Completed') AS status, 
-           payment_channel, 
-           reference_code, 
-           created_at 
-         FROM transactions 
-         WHERE user_id = ?`, 
+        `SELECT transaction_id AS id, COALESCE(title, type) AS title, category, type, amount, COALESCE(status, 'Completed') AS status, payment_channel, reference_code, created_at FROM transactions WHERE user_id = ?`, 
         [userId]
-      ).catch(() => [[]]);
+      );
 
-      // 2. Fetch from deposits table (if exists)
-      const [depositRows] = await pool.query(
-        `SELECT 
-           id, 
-           CONCAT('Recharge (', COALESCE(transaction_id, reference, id), ')') AS title,
-           'recharge' AS category,
-           'deposit' AS type,
-           amount,
-           COALESCE(status, 'pending') AS status,
-           channel AS payment_channel,
-           reference AS reference_code,
-           created_at
-         FROM deposits 
-         WHERE user_id = ?`,
-        [userId]
-      ).catch(() => [[]]);
+      let depositRows = [];
+      try {
+        const [dRows] = await pool.query(
+          `SELECT id, CONCAT('Recharge (', COALESCE(transaction_id, reference, id), ')') AS title, 'recharge' AS category, 'deposit' AS type, amount, COALESCE(status, 'pending') AS status, channel AS payment_channel, reference AS reference_code, created_at FROM deposits WHERE user_id = ?`,
+          [userId]
+        );
+        depositRows = dRows;
+      } catch (e) {
+        console.warn('Deposits table query failed (does table exist?):', e.message);
+      }
 
-      // 3. Fetch from withdrawals table (if exists)
-      const [withdrawalRows] = await pool.query(
-        `SELECT 
-           id, 
-           CONCAT('Withdrawal (', method, ')') AS title,
-           'withdrawal' AS category,
-           'withdrawal' AS type,
-           amount,
-           COALESCE(status, 'pending') AS status,
-           method AS payment_channel,
-           account_info AS reference_code,
-           created_at
-         FROM withdrawals 
-         WHERE user_id = ?`,
-        [userId]
-      ).catch(() => [[]]);
+      let withdrawalRows = [];
+      try {
+        const [wRows] = await pool.query(
+          `SELECT id, CONCAT('Withdrawal (', method, ')') AS title, 'withdrawal' AS category, 'withdrawal' AS type, amount, COALESCE(status, 'pending') AS status, method AS payment_channel, account_info AS reference_code, created_at FROM withdrawals WHERE user_id = ?`,
+          [userId]
+        );
+        withdrawalRows = wRows;
+      } catch (e) {
+        console.warn('Withdrawals table query failed (does table exist?):', e.message);
+      }
 
-      // Combine and sort by newest first
       const allRecords = [...txRows, ...depositRows, ...withdrawalRows];
       allRecords.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
       res.json({ success: true, records: allRecords });
     } catch (err) {
-      console.error('Accounting fetch error:', err);
-      res.status(500).json({ success: false, message: 'Failed to load accounting records' });
+      console.error('Accounting fatal error:', err);
+      res.status(500).json({ success: false, message: err.message });
     }
   });
 
