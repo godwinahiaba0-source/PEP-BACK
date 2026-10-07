@@ -152,10 +152,13 @@ function userRoutes(pool, verifyToken, upload) {
   });
   
 
-  // 3. ACCOUNTING RECORDS
+  // 3. ACCOUNTING RECORDS (Unified: transactions, recharges, withdrawals)
   router.get('/accounting', verifyToken, async (req, res) => {
     try {
-      const [rows] = await pool.query(
+      const userId = req.user.id;
+
+      // 1. Fetch regular transactions (yields, commissions, etc.)
+      const [txRows] = await pool.query(
         `SELECT 
            transaction_id AS id, 
            CASE 
@@ -173,12 +176,49 @@ function userRoutes(pool, verifyToken, upload) {
            reference_code, 
            created_at 
          FROM transactions 
-         WHERE user_id = ? 
-         ORDER BY created_at DESC`, 
-        [req.user.id]
-      ); 
+         WHERE user_id = ?`, 
+        [userId]
+      );
 
-      res.json({ success: true, records: rows });
+      // 2. Fetch recharges / deposits with live status
+      const [depositRows] = await pool.query(
+        `SELECT 
+           id, 
+           CONCAT('Recharge (', COALESCE(transaction_id, reference, id), ')') AS title,
+           'recharge' AS category,
+           'deposit' AS type,
+           amount,
+           status,
+           channel AS payment_channel,
+           reference AS reference_code,
+           created_at
+         FROM deposits 
+         WHERE user_id = ?`,
+        [userId]
+      ).catch(() => [[]]);
+
+      // 3. Fetch withdrawals with live status
+      const [withdrawalRows] = await pool.query(
+        `SELECT 
+           id, 
+           CONCAT('Withdrawal (', method, ')') AS title,
+           'withdrawal' AS category,
+           'withdrawal' AS type,
+           amount,
+           status,
+           method AS payment_channel,
+           account_info AS reference_code,
+           created_at
+         FROM withdrawals 
+         WHERE user_id = ?`,
+        [userId]
+      ).catch(() => [[]]);
+
+      // Combine all records into one list and sort by newest first
+      const allRecords = [...txRows, ...depositRows, ...withdrawalRows];
+      allRecords.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      res.json({ success: true, records: allRecords });
     } catch (err) {
       console.error('Accounting fetch error:', err);
       res.status(500).json({ success: false, message: 'Failed to load accounting records' });
@@ -248,6 +288,24 @@ function userRoutes(pool, verifyToken, upload) {
       res.status(500).json({ success: false, message: 'Failed to load recharge configuration' });
     }
   });
+
+  const getRechargeHistoryHandler = async (req, res) => {
+    try {
+      const [rows] = await pool.query(
+        'SELECT id, amount, channel, transaction_id, reference, proof_image, status, created_at FROM deposits WHERE user_id = ? ORDER BY created_at DESC',
+        [req.user.id]
+      ).catch(() => [[]]);
+
+      res.json({ success: true, records: rows, history: rows });
+    } catch (err) {
+      console.error('Recharge history fetch error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch recharge records' });
+    }
+  };
+
+  router.get('/recharge/history', verifyToken, getRechargeHistoryHandler);
+  router.get('/recharge/records', verifyToken, getRechargeHistoryHandler);
+  router.get('/user/recharge-records', verifyToken, getRechargeHistoryHandler);
 
   router.post('/recharge/submit', verifyToken, async (req, res) => {
     const { amount, channel, transactionId, reference } = req.body;
