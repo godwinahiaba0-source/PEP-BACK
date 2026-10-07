@@ -73,26 +73,39 @@ function verifyToken(req, res, next) {
   });
 }
 
+const jwt = require('jsonwebtoken');
+
 async function verifyAdmin(req, res, next) {
   try {
-    // 1. Log the decoded token to see what keys/values are inside
-    console.log("Decoded Token (req.user):", req.user);
-    
-    const identifier = req.user.username || req.user.id || req.user.user_id || req.user.adminId;
-    
-    if (!identifier) {
-      console.log("No valid admin identifier found in token payload.");
-      return res.status(403).json({ success: false, message: 'Access denied: No identifier in token' });
+    // Fallback: If verifyToken didn't run or attach req.user, try extracting it from headers manually
+    if (!req.user) {
+      const authHeader = req.headers['authorization'];
+      if (authHeader) {
+        const token = authHeader.split(' ')[1];
+        try {
+          req.user = jwt.verify(token, JWT_SECRET);
+        } catch (e) {
+          console.log("Manual token verification failed in verifyAdmin:", e.message);
+        }
+      }
     }
 
-    // 2. Query checking multiple possible column names in your 'admins' table
+    console.log("Final evaluated req.user:", req.user);
+
+    if (!req.user) {
+      return res.status(403).json({ success: false, message: 'Access denied: No token or user context' });
+    }
+
+    const adminIdentifier = req.user.username || req.user.id || req.user.user_id || req.user.adminId;
+    
+    // Query the admins table
     const [rows] = await pool.query(
-      'SELECT * FROM admins WHERE username = ? OR id = ? OR name = ?', 
-      [identifier, identifier, identifier]
+      'SELECT * FROM admins WHERE username = ? OR id = ?', 
+      [adminIdentifier, adminIdentifier]
     );
     
     if (rows.length === 0) {
-      console.log(`Admin not found in database for identifier: ${identifier}`);
+      console.log(`❌ Admin identifier "${adminIdentifier}" not found in 'admins' table.`);
       return res.status(403).json({ success: false, message: 'Access denied: Admin privileges required' });
     }
     
