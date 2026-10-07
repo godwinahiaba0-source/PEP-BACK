@@ -155,7 +155,23 @@ function userRoutes(pool, verifyToken, upload) {
   router.get('/accounting', verifyToken, async (req, res) => {
     try {
       const [rows] = await pool.query(
-        'SELECT transaction_id AS id, title, category, type, amount, status, payment_channel, reference_code, created_at FROM transactions WHERE user_id = ? ORDER BY created_at DESC', 
+        `SELECT 
+           transaction_id AS id, 
+           CASE 
+             WHEN type IN ('commission', 'REFERRAL_REBATE') THEN 'hourly commission'
+             WHEN type IN ('yield', 'device_payout', 'payout') THEN 'device hourly payouts'
+             ELSE LOWER(COALESCE(title, type))
+           END AS title,
+           category, 
+           type, 
+           amount, 
+           status, 
+           payment_channel, 
+           reference_code, 
+           created_at 
+         FROM transactions 
+         WHERE user_id = ? 
+         ORDER BY created_at DESC`, 
         [req.user.id]
       ); 
 
