@@ -155,13 +155,13 @@ function userRoutes(pool, verifyToken, upload) {
   router.get('/accounting', verifyToken, async (req, res) => {
     try {
       const [rows] = await pool.query(
-        'SELECT id, title, description, type, amount, status, created_at FROM transactions WHERE user_id = ? ORDER BY created_at DESC', 
+        'SELECT transaction_id AS id, title, category, type, amount, status, payment_channel, reference_code, created_at FROM transactions WHERE user_id = ? ORDER BY created_at DESC', 
         [req.user.id]
-      ).catch(() => [[]]); 
+      ); 
 
       res.json({ success: true, records: rows });
     } catch (err) {
-      console.error(err);
+      console.error('Accounting fetch error:', err);
       res.status(500).json({ success: false, message: 'Failed to load accounting records' });
     }
   });
@@ -295,7 +295,7 @@ function userRoutes(pool, verifyToken, upload) {
       try {
         await connection.beginTransaction();
 
-        await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDinnedCollection = totalDeduction, req.user.id]);
+        await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
         await connection.query(
           'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
           [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
