@@ -10,7 +10,7 @@ function initDeviceWorker(db) {
             await connection.beginTransaction();
 
             // ==========================================
-            // 1. PROCESS VIP LEVEL 0 FREE CREDITS (Clean query without created_at)
+            // 1. PROCESS VIP LEVEL 0 FREE CREDITS
             // ==========================================
             const [vipZeroUsers] = await connection.execute(
                 `SELECT ud.user_device_id, ud.user_id, ud.hourly_yield
@@ -29,7 +29,7 @@ function initDeviceWorker(db) {
                     [earnings, device.user_id]
                 );
 
-                // Log transaction with proper fields for accounting display
+                // Log transaction for accounting records
                 await connection.execute(
                     `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Hourly Yield', 'Free VIP 0 device yield payout', 'yield', ?, 'success', NOW())`,
                     [device.user_id, earnings]
@@ -179,7 +179,7 @@ const buyDevice = async (req, res, db) => {
             [newVipLevel, userId]
         );
 
-        // Log purchase as a debit transaction (negative amount) so accounting.html marks it red
+        // Log purchase as a debit transaction (negative amount)
         await connection.execute(
             `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Device Purchase', 'Purchased VIP device: ${device.name}', 'BUY_DEVICE', ?, 'success', NOW())`,
             [userId, -devicePrice]
@@ -188,12 +188,7 @@ const buyDevice = async (req, res, db) => {
         // ==========================================
         // 5. MULTI-LEVEL INSTANT REFERRAL REBATES
         // ==========================================
-        const rebateRates = {
-            1: 0.10,
-            2: 0.05,
-            3: 0.03
-        };
-
+        const rebateRates = { 1: 0.10, 2: 0.05, 3: 0.03 };
         const [uplines] = await connection.execute(
             `SELECT ancestor_user_id, level FROM team_referrals WHERE descendant_user_id = ? AND level IN (1, 2, 3)`,
             [userId]
