@@ -127,35 +127,29 @@ function userRoutes(pool, verifyToken, upload) {
   });
   
 
-  // 3. ACCOUNTING RECORDS (Unified: transactions, recharges, withdrawals)
+  // 3. ACCOUNTING RECORDS (Unified across transactions, deposits, and withdrawals)
   router.get('/accounting', verifyToken, async (req, res) => {
     try {
       const userId = req.user.id;
 
-      // 1. Fetch regular transactions (yields, commissions, etc.)
+      // 1. Fetch from transactions table
       const [txRows] = await pool.query(
         `SELECT 
            transaction_id AS id, 
-           CASE 
-             WHEN LOWER(type) IN ('commission', 'referral_rebate') OR LOWER(title) LIKE '%commission%' 
-               THEN 'Hourly commission'
-             WHEN LOWER(type) IN ('yield', 'device_payout', 'payout', 'earning', 'device_earning') OR LOWER(title) LIKE '%earning%' OR LOWER(title) LIKE '%yield%' 
-               THEN 'Device hourly Income'
-             ELSE COALESCE(title, type)
-           END AS title,
+           COALESCE(title, type) AS title,
            category, 
            type, 
            amount, 
-           'Completed' AS status, 
+           COALESCE(status, 'Completed') AS status, 
            payment_channel, 
            reference_code, 
            created_at 
          FROM transactions 
          WHERE user_id = ?`, 
         [userId]
-      );
+      ).catch(() => [[]]);
 
-      // 2. Fetch recharges / deposits with live status
+      // 2. Fetch from deposits table (if exists)
       const [depositRows] = await pool.query(
         `SELECT 
            id, 
@@ -163,7 +157,7 @@ function userRoutes(pool, verifyToken, upload) {
            'recharge' AS category,
            'deposit' AS type,
            amount,
-           status,
+           COALESCE(status, 'pending') AS status,
            channel AS payment_channel,
            reference AS reference_code,
            created_at
@@ -172,7 +166,7 @@ function userRoutes(pool, verifyToken, upload) {
         [userId]
       ).catch(() => [[]]);
 
-      // 3. Fetch withdrawals with live status
+      // 3. Fetch from withdrawals table (if exists)
       const [withdrawalRows] = await pool.query(
         `SELECT 
            id, 
@@ -180,7 +174,7 @@ function userRoutes(pool, verifyToken, upload) {
            'withdrawal' AS category,
            'withdrawal' AS type,
            amount,
-           status,
+           COALESCE(status, 'pending') AS status,
            method AS payment_channel,
            account_info AS reference_code,
            created_at
@@ -189,9 +183,9 @@ function userRoutes(pool, verifyToken, upload) {
         [userId]
       ).catch(() => [[]]);
 
-      // Combine all records into one list and sort by newest first
+      // Combine and sort by newest first
       const allRecords = [...txRows, ...depositRows, ...withdrawalRows];
-      allRecords.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      allRecords.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
       res.json({ success: true, records: allRecords });
     } catch (err) {
