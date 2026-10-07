@@ -158,9 +158,9 @@ function userRoutes(pool, verifyToken, upload) {
         `SELECT 
            transaction_id AS id, 
            CASE 
-             WHEN type IN ('commission', 'REFERRAL_REBATE') THEN 'hourly commission'
-             WHEN type IN ('yield', 'device_payout', 'payout') THEN 'device hourly payouts'
-             ELSE LOWER(COALESCE(title, type))
+             WHEN type IN ('commission', 'REFERRAL_REBATE') THEN CONCAT('Hourly commission (', COALESCE(reference_code, transaction_id), ')')
+             WHEN type IN ('yield', 'device_payout', 'payout') THEN CONCAT('Device hourly Income (', COALESCE(reference_code, transaction_id), ')')
+             ELSE CONCAT(COALESCE(title, type), ' (', COALESCE(reference_code, transaction_id), ')')
            END AS title,
            category, 
            type, 
