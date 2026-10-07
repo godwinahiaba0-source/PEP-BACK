@@ -23,10 +23,16 @@ function initDeviceWorker(db) {
             for (const device of vipZeroUsers) {
                 const earnings = parseFloat(device.hourly_yield || 0.25);
 
-                // Credit user balance
+                // Credit user balance, today/week/month earnings, and investment benefits
                 await connection.execute(
-                    `UPDATE users SET balance = balance + ? WHERE user_id = ?`,
-                    [earnings, device.user_id]
+                    `UPDATE users SET 
+                        balance = balance + ?, 
+                        today_earnings = today_earnings + ?, 
+                        week_earnings = week_earnings + ?, 
+                        month_earnings = month_earnings + ?,
+                        total_investment_benefits = total_investment_benefits + ?
+                     WHERE user_id = ?`,
+                    [earnings, earnings, earnings, earnings, earnings, device.user_id]
                 );
 
                 // Log transaction for accounting records
@@ -50,16 +56,23 @@ function initDeviceWorker(db) {
 
             for (const device of activeDevices) {
                 if (!device.user_id || device.hourly_yield == null) continue;
+                const yieldAmount = parseFloat(device.hourly_yield);
 
-                // Credit base hourly yield to device owner
+                // Credit base hourly yield to device owner & update earnings columns
                 await connection.execute(
-                    `UPDATE users SET balance = balance + ? WHERE user_id = ?`,
-                    [device.hourly_yield, device.user_id]
+                    `UPDATE users SET 
+                        balance = balance + ?, 
+                        today_earnings = today_earnings + ?, 
+                        week_earnings = week_earnings + ?, 
+                        month_earnings = month_earnings + ?,
+                        total_investment_benefits = total_investment_benefits + ?
+                     WHERE user_id = ?`,
+                    [yieldAmount, yieldAmount, yieldAmount, yieldAmount, yieldAmount, device.user_id]
                 );
 
                 await connection.execute(
                     `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Device Yield', 'Hourly VIP device payout', 'yield', ?, 'success', NOW())`,
-                    [device.user_id, device.hourly_yield]
+                    [device.user_id, yieldAmount]
                 );
 
                 // ==========================================
@@ -84,7 +97,7 @@ function initDeviceWorker(db) {
                     const upline = uplineRows[0];
                     currentUserId = upline.user_id;
 
-                    const commissionAmount = device.hourly_yield * commissionRates[level];
+                    const commissionAmount = yieldAmount * commissionRates[level];
                     if (commissionAmount <= 0) continue;
 
                     const uplineMaxTier = upline.max_device_tier || 0;
@@ -92,8 +105,14 @@ function initDeviceWorker(db) {
 
                     if (uplineMaxTier >= downlineTier) {
                         await connection.execute(
-                            `UPDATE users SET balance = balance + ? WHERE user_id = ?`,
-                            [commissionAmount, upline.user_id]
+                            `UPDATE users SET 
+                                balance = balance + ?, 
+                                total_team_benefits = total_team_benefits + ?,
+                                today_earnings = today_earnings + ?, 
+                                week_earnings = week_earnings + ?, 
+                                month_earnings = month_earnings + ?
+                             WHERE user_id = ?`,
+                            [commissionAmount, commissionAmount, commissionAmount, commissionAmount, commissionAmount, upline.user_id]
                         );
                         await connection.execute(
                             `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Team Commission', 'Level ${level + 1} hourly team commission', 'commission', ?, 'success', NOW())`,
