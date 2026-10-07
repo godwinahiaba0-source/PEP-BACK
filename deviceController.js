@@ -37,7 +37,7 @@ function initDeviceWorker(db) {
 
                 // Log transaction for accounting records
                 await connection.execute(
-                    `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Hourly Yield', 'Free VIP 0 device yield payout', 'yield', ?, 'success', NOW())`,
+                    `INSERT INTO transactions (user_id, title, type, amount, status, created_at) VALUES (?, 'Hourly Yield', 'yield', ?, 'success', NOW())`,
                     [device.user_id, earnings]
                 ).catch(() => {});
             }
@@ -71,7 +71,7 @@ function initDeviceWorker(db) {
                 );
 
                 await connection.execute(
-                    `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Device Yield', 'Hourly VIP device payout', 'yield', ?, 'success', NOW())`,
+                    `INSERT INTO transactions (user_id, title, type, amount, status, created_at) VALUES (?, 'Device Yield', 'yield', ?, 'success', NOW())`,
                     [device.user_id, yieldAmount]
                 );
 
@@ -115,7 +115,7 @@ function initDeviceWorker(db) {
                             [commissionAmount, commissionAmount, commissionAmount, commissionAmount, commissionAmount, upline.user_id]
                         );
                         await connection.execute(
-                            `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Team Commission', 'Level ${level + 1} hourly team commission', 'commission', ?, 'success', NOW())`,
+                            `INSERT INTO transactions (user_id, title, type, amount, status, created_at) VALUES (?, 'Team Commission', 'commission', ?, 'success', NOW())`,
                             [upline.user_id, commissionAmount]
                         );
                     } else {
@@ -200,7 +200,7 @@ const buyDevice = async (req, res, db) => {
 
         // Log purchase as a debit transaction (negative amount)
         await connection.execute(
-            `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Device Purchase', 'Purchased VIP device: ${device.name}', 'BUY_DEVICE', ?, 'success', NOW())`,
+            `INSERT INTO transactions (user_id, title, type, amount, status, created_at) VALUES (?, 'Device Purchase', 'BUY_DEVICE', ?, 'success', NOW())`,
             [userId, -devicePrice]
         );
 
@@ -237,7 +237,7 @@ const buyDevice = async (req, res, db) => {
                     );
 
                     await connection.execute(
-                        `INSERT INTO transactions (user_id, title, description, type, amount, status, created_at) VALUES (?, 'Referral Rebate', 'Level ${level} referral rebate from device purchase', 'REFERRAL_REBATE', ?, 'success', NOW())`,
+                        `INSERT INTO transactions (user_id, title, type, amount, status, created_at) VALUES (?, 'Referral Rebate', 'REFERRAL_REBATE', ?, 'success', NOW())`,
                         [uplineId, rebateAmount]
                     );
                 }
