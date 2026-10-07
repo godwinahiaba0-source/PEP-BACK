@@ -151,6 +151,79 @@ function userRoutes(pool, verifyToken, upload) {
     }
   });
 
+  // ================= SYSTEM NOTICE ROUTES =================
+
+const saveNoticeHandler = async (req, res) => {
+  const message = req.body.message || req.body.notice;
+  const title = req.body.title;
+
+  try {
+    if (!message || String(message).trim() === '') {
+      await pool.query('UPDATE notices SET is_active = 0');
+      return res.json({ success: true, message: 'Broadcast notice cleared successfully.' });
+    }
+
+    const noticeTitle = title && String(title).trim() ? String(title).trim() : 'System Announcement';
+
+    await pool.query('UPDATE notices SET is_active = 0');
+    await pool.query(
+      'INSERT INTO notices (title, message, is_active) VALUES (?, ?, 1)',
+      [noticeTitle, String(message).trim()]
+    );
+
+    res.json({ success: true, message: 'Notice broadcasted successfully to all users!' });
+  } catch (err) {
+    console.error('Error saving notice:', err);
+    res.status(500).json({ success: false, message: 'Server error saving notice.' });
+  }
+};
+
+app.post('/api/admin/notice', authenticateToken, saveNoticeHandler);
+app.post('/api/notice', saveNoticeHandler);
+
+app.get('/api/admin/notice', authenticateToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, title, message, is_active, created_at FROM notices WHERE is_active = 1 ORDER BY id DESC LIMIT 1'
+    );
+
+    if (rows.length === 0) {
+      return res.json({ success: true, notice: null });
+    }
+
+    res.json({ success: true, notice: rows[0] });
+  } catch (err) {
+    console.error('Error fetching admin notice:', err);
+    res.status(500).json({ success: false, message: 'Server error fetching notice.' });
+  }
+});
+
+app.get('/api/notice', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, title, message, created_at FROM notices WHERE is_active = 1 ORDER BY id DESC LIMIT 1'
+    );
+
+    if (rows.length === 0) {
+      return res.json({ success: true, notice: null });
+    }
+
+    res.json({
+      success: true,
+      notice: {
+        id: rows[0].id,
+        title: rows[0].title || 'System Announcement',
+        message: rows[0].message,
+        createdAt: rows[0].created_at
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching notice for users:', err);
+    res.status(500).json({ success: false, message: 'Server error fetching notice.' });
+  }
+});
+
+
   // 3. ACCOUNTING RECORDS
   router.get('/accounting', verifyToken, async (req, res) => {
     try {
@@ -159,10 +232,10 @@ function userRoutes(pool, verifyToken, upload) {
            transaction_id AS id, 
            CASE 
              WHEN LOWER(type) IN ('commission', 'referral_rebate') OR LOWER(title) LIKE '%commission%' 
-               THEN CONCAT('Hourly commission (', COALESCE(reference_code, transaction_id), ')')
+               THEN CONCAT('Hourly commission (', COALESCE(transaction_id), ')')
              WHEN LOWER(type) IN ('yield', 'device_payout', 'payout', 'earning', 'device_earning') OR LOWER(title) LIKE '%earning%' OR LOWER(title) LIKE '%yield%' 
-               THEN CONCAT('Device hourly Income (', COALESCE(reference_code, transaction_id), ')')
-             ELSE CONCAT(COALESCE(title, type), ' (', COALESCE(reference_code, transaction_id), ')')
+               THEN CONCAT('Device hourly Income (', COALESCE(transaction_id), ')')
+             ELSE CONCAT(COALESCE(title, type), ' (', COALESCE(transaction_id), ')')
            END AS title,
            category, 
            type, 
