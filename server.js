@@ -73,8 +73,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-const jwt = require('jsonwebtoken');
-
+// Admin Verification Middleware
 async function verifyAdmin(req, res, next) {
   try {
     // Fallback: If verifyToken didn't run or attach req.user, try extracting it from headers manually
@@ -127,16 +126,28 @@ app.post('/api/auth/login', (req, res) => login(req, res, pool, JWT_SECRET));
 
 // Device Routes
 app.get('/api/devices', verifyToken, async (req, res) => {
-  const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
-  res.json({ success: true, devices });
+  try {
+    const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
+    res.json({ success: true, devices });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error fetching devices' });
+  }
 });
 app.get('/api/devices/list', verifyToken, async (req, res) => {
-  const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices');
-  res.json({ success: true, data: devices });
+  try {
+    const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices');
+    res.json({ success: true, data: devices });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error fetching device list' });
+  }
 });
 app.get('/api/devices/my-devices', verifyToken, async (req, res) => {
-  const [rows] = await pool.query('SELECT user_device_id, device_id, hourly_yield, status FROM user_devices WHERE user_id = ?', [req.user.id]);
-  res.json({ success: true, data: rows });
+  try {
+    const [rows] = await pool.query('SELECT user_device_id, device_id, hourly_yield, status FROM user_devices WHERE user_id = ?', [req.user.id]);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error fetching user devices' });
+  }
 });
 app.post('/api/devices/buy', verifyToken, (req, res) => { req.body.userId = req.user.id; buyDevice(req, res, pool); });
 
@@ -148,6 +159,15 @@ app.use('/api', userRoutes(pool, verifyToken, upload));
 
 // Admin Panel Routes
 app.use('/api', adminRoutes(pool, verifyToken, verifyAdmin, bcrypt));
+
+// Global Error Handlers to prevent Railway container crashes on unhandled rejections
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception caught gracefully:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 // Start Server using `server.listen` instead of `app.listen`
 server.listen(PORT, () => {
