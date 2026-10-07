@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-const http = require('http'); // <--- Required for Socket.io
-const { Server } = require('socket.io'); // <--- Required for Socket.io
+const http = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -16,7 +16,6 @@ const userRoutes = require('./userRoutes');
 
 const app = express();
 
-// 1. Enable full CORS & preflight handling right at the top
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -24,29 +23,25 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-const server = http.createServer(app); // <--- Create HTTP server
+const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-// Make io globally accessible for your admin routes
 global.io = io;
 
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
-// Configure Multer storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage: storage });
 
-// Middleware
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
-// SQL Database Pool Connection
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -57,10 +52,8 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-// Initialize background workers
 initDeviceWorker(pool);
 
-// Authentication Middleware
 function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ success: false, message: 'No token provided' });
@@ -73,10 +66,8 @@ function verifyToken(req, res, next) {
   });
 }
 
-// Admin Verification Middleware
 async function verifyAdmin(req, res, next) {
   try {
-    // Fallback: If verifyToken didn't run or attach req.user, try extracting it from headers manually
     if (!req.user) {
       const authHeader = req.headers['authorization'];
       if (authHeader) {
@@ -89,22 +80,18 @@ async function verifyAdmin(req, res, next) {
       }
     }
 
-    console.log("Final evaluated req.user:", req.user);
-
     if (!req.user) {
       return res.status(403).json({ success: false, message: 'Access denied: No token or user context' });
     }
 
     const adminIdentifier = req.user.username || req.user.id || req.user.user_id || req.user.adminId;
     
-    // Query the admins table
     const [rows] = await pool.query(
       'SELECT * FROM admins WHERE username = ? OR id = ?', 
       [adminIdentifier, adminIdentifier]
     );
     
     if (rows.length === 0) {
-      console.log(`❌ Admin identifier "${adminIdentifier}" not found in 'admins' table.`);
       return res.status(403).json({ success: false, message: 'Access denied: Admin privileges required' });
     }
     
@@ -116,15 +103,9 @@ async function verifyAdmin(req, res, next) {
   }
 }
 
-// ==========================================
-// MOUNT MODULED ROUTES
-// ==========================================
-
-// Auth Routes
 app.post('/api/auth/register', (req, res) => register(req, res, pool));
 app.post('/api/auth/login', (req, res) => login(req, res, pool, JWT_SECRET));
 
-// Device Routes
 app.get('/api/devices', verifyToken, async (req, res) => {
   try {
     const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices ORDER BY price ASC');
@@ -133,6 +114,7 @@ app.get('/api/devices', verifyToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error fetching devices' });
   }
 });
+
 app.get('/api/devices/list', verifyToken, async (req, res) => {
   try {
     const [devices] = await pool.query('SELECT id, name, price, hourly_yield FROM vip_devices');
@@ -141,6 +123,7 @@ app.get('/api/devices/list', verifyToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error fetching device list' });
   }
 });
+
 app.get('/api/devices/my-devices', verifyToken, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT user_device_id, device_id, hourly_yield, status FROM user_devices WHERE user_id = ?', [req.user.id]);
@@ -149,18 +132,15 @@ app.get('/api/devices/my-devices', verifyToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error fetching user devices' });
   }
 });
+
 app.post('/api/devices/buy', verifyToken, (req, res) => { req.body.userId = req.user.id; buyDevice(req, res, pool); });
 
-// Team Report Route
 app.get('/api/team/report', verifyToken, (req, res) => getTeamReport(req, res, pool));
 
-// User Profiles, Bank Cards, Accounting, Recharges, & Withdrawals (Modularized)
 app.use('/api', userRoutes(pool, verifyToken, upload));
 
-// Admin Panel Routes
 app.use('/api', adminRoutes(pool, verifyToken, verifyAdmin, bcrypt));
 
-// Global Error Handlers to prevent Railway container crashes on unhandled rejections
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception caught gracefully:', err);
 });
@@ -169,7 +149,6 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-// Start Server using `server.listen` instead of `app.listen`
 server.listen(PORT, () => {
   console.log(`🚀 Server running locally on port ${PORT}`);
 });
