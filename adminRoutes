@@ -303,19 +303,23 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     const { userId, phone } = req.body;
     try {
       let targetUserId = userId;
+
       if (!targetUserId && phone) {
         const [users] = await pool.query('SELECT user_id FROM users WHERE phone = ?', [phone]);
+        if (users.length > 0) targetUserId = users[0].user_id;
+      } else if (targetUserId && String(targetUserId).length > 9 && !isNaN(targetUserId)) {
+        const [users] = await pool.query('SELECT user_id FROM users WHERE phone = ? OR user_id = ?', [targetUserId, targetUserId]);
         if (users.length > 0) targetUserId = users[0].user_id;
       }
 
       if (!targetUserId) {
-        return res.status(404).json({ success: false, message: 'User not found.' });
+        return res.status(404).json({ success: false, message: 'User not found by phone number or ID.' });
       }
 
-      await pool.query('UPDATE users SET channel_type = NULL, channel_number = NULL, official_name = NULL WHERE user_id = ?', [targetUserId]);
+      // Delete the bank card entries completely so the user can bind a new one
       await pool.query('DELETE FROM bank_cards WHERE user_id = ?', [targetUserId]);
 
-      res.json({ success: true, message: 'Payment account details reset successfully.' });
+      res.json({ success: true, message: 'Payment account details reset successfully. User can now bind a new card.' });
     } catch (err) {
       console.error('Bank reset error:', err);
       res.status(500).json({ success: false, message: 'Failed to reset bank card details.' });
@@ -325,20 +329,32 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   router.post('/admin/users/reset-password', verifyToken, verifyAdmin, async (req, res) => {
     const { userId, phone, newPassword } = req.body;
     try {
+      let targetUserId = userId;
+      let targetPhone = phone;
+
+      // If only userId is passed, check if it's actually a phone number or ID
+      if (!targetUserId && targetPhone) {
+        // Handled via phone parameter
+      } else if (targetUserId && String(targetUserId).length > 9 && !isNaN(targetUserId)) {
+        // If admin typed phone into the userId field, parse it correctly
+        targetPhone = targetUserId;
+        targetUserId = null;
+      }
+
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(newPassword, salt);
 
       let query = '';
       let params = [];
 
-      if (userId) {
-        query = 'UPDATE users SET password = ? WHERE user_id = ?';
-        params = [hashedPassword, userId];
-      } else if (phone) {
-        query = 'UPDATE users SET password = ? WHERE phone = ?';
-        params = [hashedPassword, phone];
+      if (targetUserId) {
+        query = 'UPDATE users SET password_hash = ? WHERE user_id = ?';
+        params = [hashedPassword, targetUserId];
+      } else if (targetPhone) {
+        query = 'UPDATE users SET password_hash = ? WHERE phone = ?';
+        params = [hashedPassword, targetPhone];
       } else {
-        return res.status(400).json({ success: false, message: 'User identifier required.' });
+        return res.status(400).json({ success: false, message: 'User identifier (Phone or ID) required.' });
       }
 
       const [result] = await pool.query(query, params);
