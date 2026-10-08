@@ -1,5 +1,5 @@
 // ==========================================
-// TEAM REPORT & METRICS CONTROLLER (Using team_referrals table)
+// TEAM REPORT & METRICS CONTROLLER (Using deposits & withdrawals tables)
 // ==========================================
 
 const getTeamReport = async (req, res, db) => {
@@ -8,7 +8,7 @@ const getTeamReport = async (req, res, db) => {
 
     const connection = await db.getConnection();
     try {
-        // Fetch all downlines categorized by level directly from the team_referrals table
+        // Fetch all downlines categorized by level directly from the team_referrals table[cite: 10]
         const [referralRows] = await connection.execute(
             `SELECT descendant_user_id, level FROM team_referrals WHERE ancestor_user_id = ? AND level IN (1, 2, 3)`,
             [userId]
@@ -43,11 +43,11 @@ const getTeamReport = async (req, res, db) => {
             if (ids.length > 0) {
                 const placeholders = ids.map(() => '?').join(',');
                 
-                // Calculate total successful recharges for this specific level
+                // Calculate total approved recharges for this specific level from the deposits table
                 const [rechargeRows] = await connection.execute(
                     `SELECT COALESCE(SUM(amount), 0) as total_recharge, COUNT(DISTINCT user_id) as recharge_count 
-                     FROM transactions 
-                     WHERE user_id IN (${placeholders}) AND type = 'RECHARGE' AND status = 'SUCCESS'`,
+                     FROM deposits 
+                     WHERE user_id IN (${placeholders}) AND status = 'approved'`,
                     ids
                 );
                 
@@ -66,19 +66,19 @@ const getTeamReport = async (req, res, db) => {
             const placeholders = allTeamIds.map(() => '?').join(',');
 
             const [globalRecharge] = await connection.execute(
-                `SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE user_id IN (${placeholders}) AND type = 'RECHARGE' AND status = 'SUCCESS'`,
+                `SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE user_id IN (${placeholders}) AND status = 'approved'`,
                 allTeamIds
             );
             totalTeamRecharge = parseFloat(globalRecharge[0].total || 0);
 
             const [globalWithdraw] = await connection.execute(
-                `SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE user_id IN (${placeholders}) AND type = 'WITHDRAW' AND status = 'SUCCESS'`,
+                `SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE user_id IN (${placeholders}) AND status = 'approved'`,
                 allTeamIds
             );
             totalTeamWithdraw = parseFloat(globalWithdraw[0].total || 0);
 
             const [firstCharge] = await connection.execute(
-                `SELECT COUNT(DISTINCT user_id) as cnt FROM transactions WHERE user_id IN (${placeholders}) AND type = 'RECHARGE'`,
+                `SELECT COUNT(DISTINCT user_id) as cnt FROM deposits WHERE user_id IN (${placeholders}) AND status = 'approved'`,
                 allTeamIds
             );
             totalFirstChargeCount = parseInt(firstCharge[0].cnt || 0, 10);
