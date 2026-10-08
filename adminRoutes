@@ -230,7 +230,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
 
 
   // ==========================================
-  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS (USING team_referrals & users)
+  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS
   // ==========================================
   router.get('/admin/users', verifyToken, verifyAdmin, async (req, res) => {
     try {
@@ -240,12 +240,13 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
           u.phone, 
           u.balance, 
           u.vip_level, 
-          u.status, 
+          u.withdrawals_enabled,
           u.is_deleted,
           (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id) as total_referrals,
           (SELECT COUNT(DISTINCT tr.descendant_user_id) FROM team_referrals tr JOIN deposits d ON tr.descendant_user_id = d.user_id WHERE tr.ancestor_user_id = u.user_id AND d.status = 'approved') as deposited_referrals,
           (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id AND tr.descendant_user_id NOT IN (SELECT COALESCE(user_id, 0) FROM deposits WHERE status = 'approved')) as non_deposited_referrals
         FROM users u
+        WHERE u.is_deleted = 0
         ORDER BY u.user_id DESC
       `);
       res.json({ success: true, users });
@@ -269,14 +270,15 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   router.post('/admin/users/action', verifyToken, verifyAdmin, async (req, res) => {
     const { userId, action } = req.body;
     try {
-      const statusVal = action === 'delete' ? 'deleted' : 'active';
-      const isDeletedVal = action === 'delete' ? 1 : 0;
-      
-      await pool.query('UPDATE users SET status = ?, is_deleted = ? WHERE user_id = ?', [statusVal, isDeletedVal, userId]);
-      res.json({ success: true, message: `User account successfully ${action}d.` });
+      if (action === 'delete') {
+        await pool.query('UPDATE users SET is_deleted = 1 WHERE user_id = ?', [userId]);
+        res.json({ success: true, message: 'User account successfully deleted.' });
+      } else {
+        res.status(400).json({ success: false, message: 'Invalid user action specified.' });
+      }
     } catch (err) {
       console.error('User action error:', err);
-      res.status(500).json({ success: false, message: 'Database error modifying user status.' });
+      res.status(500).json({ success: false, message: 'Database error modifying user account status.' });
     }
   });
 
