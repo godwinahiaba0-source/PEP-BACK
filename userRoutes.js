@@ -337,6 +337,57 @@ function userRoutes(pool, verifyToken, upload) {
     }
   };
 
+  // 7. FUND INVESTMENTS
+  router.post('/fund/invest', verifyToken, async (req, res) => {
+    const { amount, planId, fundId } = req.body;
+    const targetPlanId = planId || fundId || 1;
+    const investAmount = parseFloat(amount);
+
+    if (!investAmount || investAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid investment amount' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // Check user balance
+      const [userRows] = await connection.query('SELECT balance FROM users WHERE user_id = ? FOR UPDATE', [req.user.id]);
+      if (userRows.length === 0) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+
+      const currentBalance = parseFloat(userRows[0].balance);
+      if (currentBalance < investAmount) {
+        await connection.rollback();
+        connection.release();
+        return res.status(400).json({ success: false, message: 'Insufficient balance for this investment' });
+      }
+
+      // Deduct balance from user
+      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [investAmount, req.user.id]);
+
+      // Insert record into user_investments matching your database structure
+      await connection.query(
+        `INSERT INTO user_investments (user_id, plan_id, invested_amount, expected_revenue, status, started_at, ends_at) 
+         VALUES (?, ?, ?, ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))`,
+        [req.user.id, targetPlanId, investAmount, investAmount * 1.5] // Adjust expected return multiplier if needed
+      );
+
+      await connection.commit();
+      connection.release();
+
+      res.json({ success: true, message: 'Investment submitted successfully!' });
+    } catch (err) {
+      await connection.rollback();
+      connection.release();
+      console.error('Fund invest error:', err);
+      res.status(500).json({ success: false, message: 'Server error processing investment' });
+    }
+  });
+
   router.post('/withdraw/request', verifyToken, handleWithdrawalRequest);
   router.post('/withdraw/submit', verifyToken, handleWithdrawalRequest);
   router.post('/user/withdraw', verifyToken, handleWithdrawalRequest);
