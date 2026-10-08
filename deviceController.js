@@ -10,14 +10,15 @@ function initDeviceWorker(db) {
             await connection.beginTransaction();
 
             // ==========================================
-            // 1. PROCESS VIP LEVEL 0 FREE CREDITS
+            // 1. PROCESS VIP LEVEL 0 FREE CREDITS (MAX 24 PAYOUTS & MUST REMAIN VIP 0)
             // ==========================================
             const [vipZeroUsers] = await connection.execute(
                 `SELECT ud.user_device_id, ud.user_id, ud.hourly_yield
                  FROM user_devices ud
                  JOIN users u ON ud.user_id = u.user_id
                  WHERE u.vip_level = 0 
-                   AND ud.status = 'ACTIVE'`
+                   AND ud.status = 'ACTIVE'
+                   AND (SELECT COUNT(*) FROM transactions t WHERE t.user_id = ud.user_id AND t.title = 'Hourly Yield') < 24`
             );
 
             for (const device of vipZeroUsers) {
@@ -31,7 +32,7 @@ function initDeviceWorker(db) {
                         week_earnings = week_earnings + ?, 
                         month_earnings = month_earnings + ?,
                         total_investment_benefits = total_investment_benefits + ?
-                     WHERE user_id = ?`,
+                     WHERE user_id = ? AND vip_level = 0`,
                     [earnings, earnings, earnings, earnings, earnings, device.user_id]
                 );
 
@@ -57,6 +58,10 @@ function initDeviceWorker(db) {
             for (const device of activeDevices) {
                 if (!device.user_id || device.hourly_yield == null) continue;
                 const yieldAmount = parseFloat(device.hourly_yield);
+                const downlineTier = device.device_tier_id || 0;
+
+                // Skip commissions completely if downline is somehow VIP 0
+                if (downlineTier <= 0) continue;
 
                 // Credit base hourly yield to device owner & update earnings columns
                 await connection.execute(
@@ -83,7 +88,7 @@ function initDeviceWorker(db) {
 
                 for (let level = 0; level < 3; level++) {
                     const [uplineRows] = await connection.execute(
-                        `SELECT u.user_id, u.balance, u.total_team_benefits, 
+                        `SELECT u.user_id, u.balance, u.total_team_benefits, u.vip_level,
                          (SELECT MAX(vd_inner.id) FROM user_devices ud_inner 
                           JOIN vip_devices vd_inner ON ud_inner.device_id = vd_inner.id 
                           WHERE ud_inner.user_id = u.user_id AND ud_inner.status = 'ACTIVE') as max_device_tier
@@ -101,9 +106,9 @@ function initDeviceWorker(db) {
                     if (commissionAmount <= 0) continue;
 
                     const uplineMaxTier = upline.max_device_tier || 0;
-                    const downlineTier = device.device_tier_id || 0;
 
-                    if (uplineMaxTier >= downlineTier) {
+                    // STRICT RULE: Upline must be EQUAL TO or HIGHER than downline tier, and upline cannot be VIP 0
+                    if (upline.vip_level > 0 && uplineMaxTier >= downlineTier) {
                         await connection.execute(
                             `UPDATE users SET 
                                 balance = balance + ?, 
@@ -119,16 +124,17 @@ function initDeviceWorker(db) {
                             [upline.user_id, commissionAmount]
                         );
                     } else {
+                        // If upline tier is lower than downline or upline is VIP 0, no commission is awarded
                         await connection.execute(
                             `UPDATE users SET total_team_benefits = total_team_benefits + ? WHERE user_id = ?`,
                             [commissionAmount, upline.user_id]
-                        );
+                        ).catch(() => {});
                     }
                 }
             }
 
             await connection.commit();
-            console.log(`✅ Processed payouts & commissions for ${vipZeroUsers.length} VIP 0 users and ${activeDevices.length} paid devices.`);
+            console.log(`✅ Processed payouts & commissions for VIP 0 and paid devices.`);
         } catch (error) {
             await connection.rollback();
             console.error('❌ Payout & Commission error:', error);
@@ -163,6 +169,7 @@ const buyDevice = async (req, res, db) => {
         if (devices.length === 0) throw new Error('Device not found');
         const device = devices[0];
         const devicePrice = parseFloat(device.price);
+        const buyerTierId = device.id;
 
         // 2. Get user balance
         const [users] = await connection.execute(
@@ -219,16 +226,19 @@ const buyDevice = async (req, res, db) => {
             const rate = rebateRates[level] || 0;
 
             if (rate > 0) {
+                // Get upline's maximum device tier ID & max price
                 const [uplineDevices] = await connection.execute(
-                    `SELECT COALESCE(MAX(d.price), 0) as max_price 
+                    `SELECT COALESCE(MAX(d.price), 0) as max_price, COALESCE(MAX(d.id), 0) as max_tier_id 
                      FROM user_devices ud 
                      JOIN vip_devices d ON ud.device_id = d.id 
-                     WHERE ud.user_id = ?`,
+                     WHERE ud.user_id = ? AND ud.status = 'ACTIVE'`,
                     [uplineId]
                 );
-                const uplineMaxDevicePrice = parseFloat(uplineDevices[0].max_price || 0);
+                const uplineMaxPrice = parseFloat(uplineDevices[0].max_price || 0);
+                const uplineMaxTierId = parseInt(uplineDevices[0].max_tier_id || 0);
 
-                if (uplineMaxDevicePrice >= devicePrice) {
+                // STRICT RULE: Upline must have equal or higher tier/price AND cannot be VIP 0 (uplineMaxTierId > 0)
+                if (uplineMaxTierId > 0 && uplineMaxTierId >= buyerTierId && uplineMaxPrice >= devicePrice) {
                     const rebateAmount = devicePrice * rate;
 
                     await connection.execute(
