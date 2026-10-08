@@ -67,7 +67,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
-
   // ==========================================
   // 1. STATS & OVERVIEW ENDPOINT
   // ==========================================
@@ -97,12 +96,10 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
-
   // ==========================================
   // 2. NOTICE SYSTEM ENDPOINTS
   // ==========================================
   let globalNotice = { message: '' };
-
   router.get('/notice', async (req, res) => {
     res.json({ success: true, notice: globalNotice });
   });
@@ -112,7 +109,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     globalNotice = { message: message || '' };
     res.json({ success: true, message: message ? 'Broadcast notice updated successfully' : 'Notice cleared' });
   });
-
 
   // ==========================================
   // 3. RECHARGE (DEPOSIT) MANAGEMENT ENDPOINTS
@@ -169,7 +165,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       res.status(500).json({ success: false, message: 'Server error processing recharge action' });
     }
   });
-
 
   // ==========================================
   // 4. WITHDRAWAL MANAGEMENT ENDPOINTS
@@ -228,7 +223,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
-
   // ==========================================
   // 5. USER MANAGEMENT & CONTROLS ENDPOINTS
   // ==========================================
@@ -273,6 +267,9 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       if (action === 'delete') {
         await pool.query('UPDATE users SET is_deleted = 1 WHERE user_id = ?', [userId]);
         res.json({ success: true, message: 'User account successfully deleted.' });
+      } else if (action === 'restore') {
+        await pool.query('UPDATE users SET is_deleted = 0 WHERE user_id = ?', [userId]);
+        res.json({ success: true, message: 'User account successfully restored.' });
       } else {
         res.status(400).json({ success: false, message: 'Invalid user action specified.' });
       }
@@ -299,6 +296,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
+  // UPDATED: Robust bank account reset handling both phone and user ID
   router.post('/admin/bankcard/reset', verifyToken, verifyAdmin, async (req, res) => {
     const { userId, phone } = req.body;
     try {
@@ -307,8 +305,9 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       if (!targetUserId && phone) {
         const [users] = await pool.query('SELECT user_id FROM users WHERE phone = ?', [phone]);
         if (users.length > 0) targetUserId = users[0].user_id;
-      } else if (targetUserId && String(targetUserId).length > 9 && !isNaN(targetUserId)) {
-        const [users] = await pool.query('SELECT user_id FROM users WHERE phone = ? OR user_id = ?', [targetUserId, targetUserId]);
+      } else if (targetUserId) {
+        // Check if value entered in userId is actually a phone number or a direct ID
+        const [users] = await pool.query('SELECT user_id FROM users WHERE user_id = ? OR phone = ?', [targetUserId, targetUserId]);
         if (users.length > 0) targetUserId = users[0].user_id;
       }
 
@@ -326,19 +325,24 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
+  // UPDATED: Robust password reset handling both phone and user ID securely
   router.post('/admin/users/reset-password', verifyToken, verifyAdmin, async (req, res) => {
     const { userId, phone, newPassword } = req.body;
     try {
       let targetUserId = userId;
       let targetPhone = phone;
 
-      // If only userId is passed, check if it's actually a phone number or ID
       if (!targetUserId && targetPhone) {
-        // Handled via phone parameter
-      } else if (targetUserId && String(targetUserId).length > 9 && !isNaN(targetUserId)) {
-        // If admin typed phone into the userId field, parse it correctly
-        targetPhone = targetUserId;
-        targetUserId = null;
+        // Phone explicitly provided
+      } else if (targetUserId) {
+        // If an identifier was sent in targetUserId, check if it maps to a user_id or a phone string
+        const [users] = await pool.query('SELECT user_id, phone FROM users WHERE user_id = ? OR phone = ?', [targetUserId, targetUserId]);
+        if (users.length > 0) {
+          targetUserId = users[0].user_id;
+        } else {
+          targetPhone = targetUserId;
+          targetUserId = null;
+        }
       }
 
       const salt = await bcrypt.genSalt(10);
@@ -359,7 +363,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
 
       const [result] = await pool.query(query, params);
       if (result.affectedRows === 0) {
-        return res.status(404).json({ success: false, message: 'User not found.' });
+        return res.status(404).json({ success: false, message: 'User not found in database.' });
       }
 
       res.json({ success: true, message: 'User password reset successfully.' });
