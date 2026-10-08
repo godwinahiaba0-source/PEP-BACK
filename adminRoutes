@@ -230,7 +230,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
 
 
   // ==========================================
-  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS (FIXED QUERY)
+  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS (USING team_referrals & users)
   // ==========================================
   router.get('/admin/users', verifyToken, verifyAdmin, async (req, res) => {
     try {
@@ -242,9 +242,9 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
           u.vip_level, 
           u.status, 
           u.is_deleted,
-          (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id) as total_referrals,
-          (SELECT COUNT(DISTINCT ref.user_id) FROM users ref JOIN deposits d ON ref.user_id = d.user_id WHERE ref.invited_by = u.user_id AND d.status = 'approved') as deposited_referrals,
-          (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id AND ref.user_id NOT IN (SELECT COALESCE(user_id, 0) FROM deposits WHERE status = 'approved')) as non_deposited_referrals
+          (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id) as total_referrals,
+          (SELECT COUNT(DISTINCT tr.descendant_user_id) FROM team_referrals tr JOIN deposits d ON tr.descendant_user_id = d.user_id WHERE tr.ancestor_user_id = u.user_id AND d.status = 'approved') as deposited_referrals,
+          (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id AND tr.descendant_user_id NOT IN (SELECT COALESCE(user_id, 0) FROM deposits WHERE status = 'approved')) as non_deposited_referrals
         FROM users u
         ORDER BY u.user_id DESC
       `);
@@ -359,10 +359,12 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
           u.user_id as id, 
           u.phone, 
           u.balance, 
-          1 as level,
+          tr.level,
           (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE user_id = u.user_id AND status = 'approved') as total_deposited
-        FROM users u 
-        WHERE u.invited_by = ?
+        FROM team_referrals tr
+        JOIN users u ON tr.descendant_user_id = u.user_id
+        WHERE tr.ancestor_user_id = ?
+        ORDER BY tr.level ASC
       `, [userId]);
 
       res.json({ success: true, tree });
