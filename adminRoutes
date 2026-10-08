@@ -333,7 +333,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   });
 
   router.post('/admin/users/reset-password', verifyToken, verifyAdmin, async (req, res) => {
-    // Accept any combination of property names the frontend might send
     const userId = req.body.userId || req.body.id;
     const phone = req.body.phone;
     const identifier = req.body.identifier || req.body.userIdentifier;
@@ -344,16 +343,11 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
         return res.status(400).json({ success: false, message: 'New password is required.' });
       }
 
-      let targetUserId = userId;
-      let targetPhone = phone;
-
-      // If an generic identifier was passed, figure out if it's a phone or ID
-      const searchVal = identifier || targetUserId || targetPhone;
+      const searchVal = identifier || userId || phone;
       if (!searchVal) {
         return res.status(400).json({ success: false, message: 'User identifier (Phone or ID) required.' });
       }
 
-      // Check if searchVal matches a phone or a user_id in the database
       const [users] = await pool.query(
         'SELECT user_id, phone FROM users WHERE phone = ? OR user_id = ?', 
         [searchVal, searchVal]
@@ -368,7 +362,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-      // Update password_hash using the definitive user_id
       await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [hashedPassword, matchedUser.user_id]);
 
       res.json({ success: true, message: 'User password reset successfully.' });
