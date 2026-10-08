@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-const http = require('http');
+const http = http = require('http'); // (keeping your original imports)
+const path = require('path');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -9,7 +10,7 @@ const mysql = require('mysql2/promise');
 const multer = require('multer');
 
 const { initDeviceWorker, buyDevice } = require('./deviceController');
-const { initInvestmentWorker } = require('./investmentWorker'); // <-- 1. IMPORTED HERE
+const { initInvestmentWorker } = require('./investmentWorker'); 
 const { getTeamReport } = require('./teamController');
 const { register, login, adminLogin } = require('./authController'); 
 const adminRoutes = require('./adminRoutes');
@@ -23,6 +24,11 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-user-role', 'x-admin-override', 'token', 'x-auth-token']
 }));
 app.options('*', cors());
+
+// Added static middleware with extensions enabled to hide .html
+app.use(express.static(path.join(__dirname, 'public'), {
+  extensions: ['html', 'htm']
+}));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -54,7 +60,7 @@ const pool = mysql.createPool({
 });
 
 initDeviceWorker(pool);
-initInvestmentWorker(pool); // <-- 2. INITIALIZED HERE
+initInvestmentWorker(pool); 
 
 function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -86,7 +92,6 @@ async function verifyAdmin(req, res, next) {
       return res.status(403).json({ success: false, message: 'Access denied: No token or user context' });
     }
 
-    // Allow if token explicitly marks them as admin
     if (req.user.role === 'admin' || req.user.isAdmin || req.user.is_admin) {
       req.admin = req.user;
       return next();
@@ -108,7 +113,6 @@ async function verifyAdmin(req, res, next) {
       console.log("Admins table query check skipped:", dbErr.message);
     }
 
-    // Resilient fallback: grant access if a valid token is present
     req.admin = req.user;
     next();
   } catch (err) {
