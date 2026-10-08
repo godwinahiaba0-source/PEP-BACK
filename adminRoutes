@@ -177,9 +177,15 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   router.get('/admin/withdrawals', verifyToken, verifyAdmin, async (req, res) => {
     try {
       const [withdrawals] = await pool.query(`
-        SELECT w.*, u.phone 
+        SELECT 
+          w.*, 
+          u.phone,
+          b.channel AS bank_channel, 
+          b.official_name AS bank_official_name, 
+          b.account_number AS bank_account_number 
         FROM withdrawals w 
         JOIN users u ON w.user_id = u.user_id 
+        LEFT JOIN bank_cards b ON w.user_id = b.user_id
         ORDER BY w.created_at DESC
       `);
       res.json({ success: true, withdrawals });
