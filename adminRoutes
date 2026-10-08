@@ -100,6 +100,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   // 2. NOTICE SYSTEM ENDPOINTS
   // ==========================================
   let globalNotice = { message: '' };
+
   router.get('/notice', async (req, res) => {
     res.json({ success: true, notice: globalNotice });
   });
@@ -107,6 +108,12 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   router.post('/admin/notice', verifyToken, verifyAdmin, async (req, res) => {
     const { message } = req.body;
     globalNotice = { message: message || '' };
+    
+    // Broadcast real-time notice update to all active users via Socket.io if available
+    if (global.io) {
+      global.io.emit('global_notice_updated', { message: globalNotice.message });
+    }
+
     res.json({ success: true, message: message ? 'Broadcast notice updated successfully' : 'Notice cleared' });
   });
 
