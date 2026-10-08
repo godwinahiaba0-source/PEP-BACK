@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const http = http = require('http'); // (keeping your original imports)
+const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -25,7 +25,7 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-// Added static middleware with extensions enabled to hide .html
+// Static middleware with extensions enabled to hide .html
 app.use(express.static(path.join(__dirname, 'public'), {
   extensions: ['html', 'htm']
 }));
