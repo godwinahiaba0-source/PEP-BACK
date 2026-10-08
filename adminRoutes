@@ -174,15 +174,21 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   });
 
   // ==========================================
-  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS
+  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS (UPDATED WITH BANK CARDS JOIN)
   // ==========================================
   router.get('/admin/withdrawals', verifyToken, verifyAdmin, async (req, res) => {
     try {
       const [withdrawals] = await pool.query(`
-        SELECT w.*, u.phone 
+        SELECT 
+          w.*, 
+          u.phone,
+          COALESCE(b.channel, w.method, 'MoMo') AS bank_channel,
+          COALESCE(b.official_name, 'N/A') AS bank_official_name,
+          COALESCE(b.account_number, 'N/A') AS bank_account_number
         FROM withdrawals w 
         JOIN users u ON w.user_id = u.user_id 
-        ORDER BY w.created_at DESC
+        LEFT JOIN bank_cards b ON w.user_id = b.user_id
+        ORDER BY w.id DESC
       `);
       res.json({ success: true, withdrawals });
     } catch (err) {
@@ -303,7 +309,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
-  // UPDATED: Robust bank account reset handling both phone and user ID
   router.post('/admin/bankcard/reset', verifyToken, verifyAdmin, async (req, res) => {
     const { userId, phone } = req.body;
     try {
@@ -313,7 +318,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
         const [users] = await pool.query('SELECT user_id FROM users WHERE phone = ?', [phone]);
         if (users.length > 0) targetUserId = users[0].user_id;
       } else if (targetUserId) {
-        // Check if value entered in userId is actually a phone number or a direct ID
         const [users] = await pool.query('SELECT user_id FROM users WHERE user_id = ? OR phone = ?', [targetUserId, targetUserId]);
         if (users.length > 0) targetUserId = users[0].user_id;
       }
@@ -322,7 +326,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
         return res.status(404).json({ success: false, message: 'User not found by phone number or ID.' });
       }
 
-      // Delete the bank card entries completely so the user can bind a new one
       await pool.query('DELETE FROM bank_cards WHERE user_id = ?', [targetUserId]);
 
       res.json({ success: true, message: 'Payment account details reset successfully. User can now bind a new card.' });
@@ -332,7 +335,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     }
   });
 
-  // UPDATED: Robust password reset handling both phone and user ID securely
   router.post('/admin/users/reset-password', verifyToken, verifyAdmin, async (req, res) => {
     const { userId, phone, newPassword } = req.body;
     try {
@@ -342,7 +344,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       if (!targetUserId && targetPhone) {
         // Phone explicitly provided
       } else if (targetUserId) {
-        // If an identifier was sent in targetUserId, check if it maps to a user_id or a phone string
         const [users] = await pool.query('SELECT user_id, phone FROM users WHERE user_id = ? OR phone = ?', [targetUserId, targetUserId]);
         if (users.length > 0) {
           targetUserId = users[0].user_id;
