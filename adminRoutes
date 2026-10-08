@@ -230,7 +230,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
 
 
   // ==========================================
-  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS
+  // 5. USER MANAGEMENT & CONTROLS ENDPOINTS (FIXED QUERY)
   // ==========================================
   router.get('/admin/users', verifyToken, verifyAdmin, async (req, res) => {
     try {
@@ -243,8 +243,8 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
           u.status, 
           u.is_deleted,
           (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id) as total_referrals,
-          (SELECT COUNT(*) FROM users ref JOIN deposits d ON ref.user_id = d.user_id WHERE ref.invited_by = u.user_id AND d.status = 'approved') as deposited_referrals,
-          (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id AND ref.user_id NOT IN (SELECT DISTINCT user_id FROM deposits WHERE status = 'approved')) as non_deposited_referrals
+          (SELECT COUNT(DISTINCT ref.user_id) FROM users ref JOIN deposits d ON ref.user_id = d.user_id WHERE ref.invited_by = u.user_id AND d.status = 'approved') as deposited_referrals,
+          (SELECT COUNT(*) FROM users ref WHERE ref.invited_by = u.user_id AND ref.user_id NOT IN (SELECT COALESCE(user_id, 0) FROM deposits WHERE status = 'approved')) as non_deposited_referrals
         FROM users u
         ORDER BY u.user_id DESC
       `);
