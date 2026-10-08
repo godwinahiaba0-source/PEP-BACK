@@ -9,6 +9,7 @@ const mysql = require('mysql2/promise');
 const multer = require('multer');
 
 const { initDeviceWorker, buyDevice } = require('./deviceController');
+const { initInvestmentWorker } = require('./investmentWorker'); // <-- 1. IMPORTED HERE
 const { getTeamReport } = require('./teamController');
 const { register, login, adminLogin } = require('./authController'); 
 const adminRoutes = require('./adminRoutes');
@@ -53,6 +54,7 @@ const pool = mysql.createPool({
 });
 
 initDeviceWorker(pool);
+initInvestmentWorker(pool); // <-- 2. INITIALIZED HERE
 
 function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
