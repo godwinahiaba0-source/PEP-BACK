@@ -294,16 +294,52 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
 
   router.post('/admin/users/balance', verifyToken, verifyAdmin, async (req, res) => {
     const { phone, type, amount } = req.body;
+    const numericAmount = parseFloat(amount);
+
+    if (!numericAmount || numericAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid adjustment amount.' });
+    }
+
+    const connection = await pool.getConnection();
     try {
-      const operator = type === 'add' ? '+' : '-';
-      const [result] = await pool.query(`UPDATE users SET balance = balance ${operator} ? WHERE phone = ?`, [amount, phone]);
-      
-      if (result.affectedRows === 0) {
+      await connection.beginTransaction();
+
+      // 1. Find user by phone to get user_id
+      const [userRows] = await connection.query('SELECT user_id FROM users WHERE phone = ? FOR UPDATE', [phone]);
+      if (userRows.length === 0) {
+        await connection.rollback();
+        connection.release();
         return res.status(404).json({ success: false, message: 'User phone number not found.' });
       }
 
-      res.json({ success: true, message: 'User balance updated successfully.' });
+      const userId = userRows[0].user_id;
+      const operator = type === 'add' ? '+' : '-';
+      const signedAmount = type === 'add' ? numericAmount : -numericAmount;
+
+      // 2. Update user balance
+      const [result] = await connection.query(`UPDATE users SET balance = balance ${operator} ? WHERE user_id = ?`, [numericAmount, userId]);
+      
+      if (result.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ success: false, message: 'Failed to update user balance.' });
+      }
+
+      // 3. Insert transaction log so it displays in user's accounting records
+      const title = type === 'add' ? 'Admin Balance Credit' : 'Admin Balance Deduction';
+      await connection.query(
+        `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
+         VALUES (?, ?, ?, ?, ?, 'Completed', NOW())`,
+        [userId, title, 'admin_adjustment', type === 'add' ? 'credit' : 'debit', signedAmount]
+      );
+
+      await connection.commit();
+      connection.release();
+
+      res.json({ success: true, message: 'User balance updated successfully and logged in records.' });
     } catch (err) {
+      await connection.rollback();
+      connection.release();
       console.error('Balance adjustment error:', err);
       res.status(500).json({ success: false, message: 'Failed to adjust user balance.' });
     }
