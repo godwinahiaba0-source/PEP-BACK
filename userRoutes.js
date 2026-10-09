@@ -340,23 +340,53 @@ function userRoutes(pool, verifyToken, upload) {
   router.post('/user/withdraw', verifyToken, handleWithdrawalRequest);
   router.post('/wallet/withdraw', verifyToken, handleWithdrawalRequest);
 
-  // 7. FUND INVESTMENTS & RECORDS
+  // 1. Get fund summary / active investments for the user (with auto-settlement)
   router.get('/fund/summary', verifyToken, async (req, res) => {
     try {
+      const userId = req.user.id;
+
+      // FIRST: Check and auto-settle any matured investments
+      const [maturedInvestments] = await pool.query(
+        'SELECT * FROM user_investments WHERE user_id = ? AND status = "active" AND ends_at <= NOW()',
+        [userId]
+      );
+
+      for (const inv of maturedInvestments) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+
+          // Mark investment as completed
+          await connection.query('UPDATE user_investments SET status = "completed" WHERE investment_id = ?', [inv.investment_id]);
+
+          // Credit expected revenue back to user balance
+          const payout = parseFloat(inv.expected_revenue || 0);
+          await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [payout, userId]);
+
+          await connection.commit();
+          connection.release();
+        } catch (txErr) {
+          await connection.rollback();
+          connection.release();
+          console.error('Error settling matured investment:', txErr);
+        }
+      }
+
+      // SECOND: Fetch updated investments and user balance
       const [investments] = await pool.query(
         `SELECT ui.*, wp.daily_profit_percentage, wp.plan_name 
          FROM user_investments ui 
          LEFT JOIN wealth_plans wp ON ui.plan_id = wp.plan_id 
          WHERE ui.user_id = ? ORDER BY ui.started_at DESC`, 
-        [req.user.id]
+        [userId]
       );
       
       const [users] = await pool.query(
         'SELECT balance FROM users WHERE user_id = ?', 
-        [req.user.id]
+        [userId]
       );
 
-      // Calculate today's earnings from active investments using their daily profit percentage
+      // Calculate today's earnings from active investments
       let todaysEarnings = 0;
       investments.forEach(inv => {
         if (inv.status === 'active' && inv.daily_profit_percentage) {
