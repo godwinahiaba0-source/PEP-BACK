@@ -174,7 +174,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   });
 
   // ==========================================
-  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS (UPDATED WITH BANK CARDS JOIN)
+  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS (UPDATED WITH AUTOMATIC REFUND)
   // ==========================================
   router.get('/admin/withdrawals', verifyToken, verifyAdmin, async (req, res) => {
     try {
@@ -204,7 +204,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     try {
       await connection.beginTransaction();
 
-      const [txs] = await connection.query('SELECT * FROM withdrawals WHERE id = ?', [transactionId]);
+      const [txs] = await connection.query('SELECT * FROM withdrawals WHERE id = ? FOR UPDATE', [transactionId]);
       if (txs.length === 0) {
         await connection.release();
         return res.status(404).json({ success: false, message: 'Withdrawal transaction not found' });
@@ -220,8 +220,17 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       await connection.query('UPDATE withdrawals SET status = ? WHERE id = ?', [newStatus, transactionId]);
 
       if (action === 'reject') {
-        const refundAmount = tx.gross_amount || tx.amount || 0;
+        const refundAmount = parseFloat(tx.gross_amount || tx.amount || 0);
+        
+        // 1. Refund the deducted amount back to user's balance
         await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [refundAmount, tx.user_id]);
+
+        // 2. Insert transaction log so it shows up in user's accounting records
+        await connection.query(
+          `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
+           VALUES (?, ?, 'refund', 'withdrawal_refund', ?, 'Completed', NOW())`,
+          [tx.user_id, `Withdrawal Refund (WD_${tx.id})`, refundAmount]
+        );
       }
 
       await connection.commit();
@@ -304,7 +313,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     try {
       await connection.beginTransaction();
 
-      // 1. Find user by phone to get user_id
       const [userRows] = await connection.query('SELECT user_id FROM users WHERE phone = ? FOR UPDATE', [phone]);
       if (userRows.length === 0) {
         await connection.rollback();
@@ -316,7 +324,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       const operator = type === 'add' ? '+' : '-';
       const signedAmount = type === 'add' ? numericAmount : -numericAmount;
 
-      // 2. Update user balance
       const [result] = await connection.query(`UPDATE users SET balance = balance ${operator} ? WHERE user_id = ?`, [numericAmount, userId]);
       
       if (result.affectedRows === 0) {
@@ -325,7 +332,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
         return res.status(404).json({ success: false, message: 'Failed to update user balance.' });
       }
 
-      // 3. Insert transaction log so it displays in user's accounting records
       const title = type === 'add' ? 'Rewards' : 'Penalty';
       await connection.query(
         `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
