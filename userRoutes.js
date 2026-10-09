@@ -344,7 +344,10 @@ function userRoutes(pool, verifyToken, upload) {
   router.get('/fund/summary', verifyToken, async (req, res) => {
     try {
       const [investments] = await pool.query(
-        'SELECT * FROM user_investments WHERE user_id = ? ORDER BY started_at DESC', 
+        `SELECT ui.*, wp.daily_profit_percentage, wp.plan_name 
+         FROM user_investments ui 
+         LEFT JOIN wealth_plans wp ON ui.plan_id = wp.plan_id 
+         WHERE ui.user_id = ? ORDER BY ui.started_at DESC`, 
         [req.user.id]
       );
       
@@ -353,9 +356,20 @@ function userRoutes(pool, verifyToken, upload) {
         [req.user.id]
       );
 
+      // Calculate today's earnings from active investments using their daily profit percentage
+      let todaysEarnings = 0;
+      investments.forEach(inv => {
+        if (inv.status === 'active' && inv.daily_profit_percentage) {
+          const invested = parseFloat(inv.invested_amount || 0);
+          const dailyRate = parseFloat(inv.daily_profit_percentage) / 100;
+          todaysEarnings += invested * dailyRate;
+        }
+      });
+
       res.json({ 
         success: true, 
         balance: users.length > 0 ? users[0].balance : 0,
+        todaysEarnings: todaysEarnings.toFixed(2),
         investments: investments 
       });
     } catch (err) {
