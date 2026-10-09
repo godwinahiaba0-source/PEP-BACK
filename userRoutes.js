@@ -295,7 +295,7 @@ function userRoutes(pool, verifyToken, upload) {
   });
 
   const handleWithdrawalRequest = async (req, res) => {
-    const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber } = req.body;
+    const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber, fundPassword } = req.body;
     const withdrawalAmount = parseFloat(amount);
 
     // Enforce minimum withdrawal limit of 20 GHS
@@ -304,14 +304,27 @@ function userRoutes(pool, verifyToken, upload) {
     }
     
     try {
-      const [userRows] = await pool.query('SELECT balance FROM users WHERE user_id = ?', [req.user.id]);
+      // Fetch user balance and fund_password hash
+      const [userRows] = await pool.query('SELECT balance, fund_password FROM users WHERE user_id = ?', [req.user.id]);
       if (userRows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
       
-      const currentBalance = userRows[0].balance;
+      const user = userRows[0];
+      const currentBalance = user.balance;
       const totalDeduction = withdrawalAmount;
 
       if (currentBalance < totalDeduction) {
         return res.status(400).json({ success: false, message: 'Insufficient balance for withdrawal' });
+      }
+
+      // Verify Fund Password if set in system
+      if (user.fund_password) {
+        if (!fundPassword) {
+          return res.status(400).json({ success: false, message: 'Please enter your fund password.' });
+        }
+        const isMatch = await bcrypt.compare(fundPassword, user.fund_password);
+        if (!isMatch) {
+          return res.status(400).json({ success: false, message: 'Incorrect fund password.' });
+        }
       }
 
       const connection = await pool.getConnection();
@@ -335,7 +348,7 @@ function userRoutes(pool, verifyToken, upload) {
       }
     } catch (err) {
       console.error('Withdrawal error:', err);
-      res.status(500).json({ success: false, message: 'Server error processing withdrawal' });
+      res.status(500).json({ success: false, message: err.message || 'Server error processing withdrawal' });
     }
   };
 
