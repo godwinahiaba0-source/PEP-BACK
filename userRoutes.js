@@ -36,18 +36,15 @@ function userRoutes(pool, verifyToken, upload) {
     try {
       const userId = req.user.id;
 
-      // Get user basic info
       const [rows] = await pool.query(
         'SELECT balance, referral_rebate, total_team_benefits, vip_level FROM users WHERE user_id = ?', 
         [userId]
       );
       const user = rows.length > 0 ? rows[0] : { balance: 0.00, referral_rebate: 0.00, total_team_benefits: 0.00, vip_level: 0 };
 
-      // Earnings transaction types (positive inflows)
       const earningTypes = ['yield', 'device_payout', 'payout', 'commission', 'REFERRAL_REBATE'];
       const placeholders = earningTypes.map(() => '?').join(',');
 
-      // Helper function to query transaction sums safely
       const getSum = async (dateCondition, extraParams = []) => {
         const [resRows] = await pool.query(
           `SELECT SUM(amount) AS total FROM transactions 
@@ -340,7 +337,75 @@ function userRoutes(pool, verifyToken, upload) {
   router.post('/user/withdraw', verifyToken, handleWithdrawalRequest);
   router.post('/wallet/withdraw', verifyToken, handleWithdrawalRequest);
 
-  // 7. FUND INVESTMENTS & RECORDS
+  // 7. FUND INVESTMENTS & SUMMARY & RECORDS
+  router.get('/fund/summary', verifyToken, async (req, res) => {
+    try {
+      const userId = req.user.id;
+
+      // Auto-settle matured investments
+      const [maturedInvestments] = await pool.query(
+        'SELECT * FROM user_investments WHERE user_id = ? AND status = "active" AND ends_at <= NOW()',
+        [userId]
+      );
+
+      for (const inv of maturedInvestments) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.query('UPDATE user_investments SET status = "completed" WHERE investment_id = ?', [inv.investment_id]);
+          const payout = parseFloat(inv.expected_revenue || 0);
+          await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [payout, userId]);
+          await connection.commit();
+          connection.release();
+        } catch (txErr) {
+          await connection.rollback();
+          connection.release();
+        }
+      }
+
+      const [investments] = await pool.query(
+        `SELECT ui.*, COALESCE(wp.daily_profit_percentage, 2.00) AS daily_profit_percentage, COALESCE(wp.duration_days, 3) AS duration_days, COALESCE(wp.plan_name, 'Investment Plan') AS plan_name 
+         FROM user_investments ui 
+         LEFT JOIN wealth_plans wp ON ui.plan_id = wp.plan_id 
+         WHERE ui.user_id = ? ORDER BY ui.started_at DESC`, 
+        [userId]
+      );
+      
+      const [users] = await pool.query('SELECT balance FROM users WHERE user_id = ?', [userId]);
+
+      let activeInvested = 0;
+      let todaysEarnings = 0;
+
+      investments.forEach(inv => {
+        if (inv.status && inv.status.toLowerCase() === 'active') {
+          const invested = parseFloat(inv.invested_amount || 0);
+          activeInvested += invested;
+
+          const profitPercent = parseFloat(inv.daily_profit_percentage) || 2.00;
+          const durationDays = parseInt(inv.duration_days) || 3;
+          
+          const totalProfit = invested * (profitPercent / 100);
+          todaysEarnings += totalProfit / durationDays;
+        }
+      });
+
+      res.json({ 
+        success: true, 
+        balance: users.length > 0 ? users[0].balance : 0,
+        summary: {
+          activeInvested: activeInvested.toFixed(2),
+          todaysEarnings: todaysEarnings.toFixed(2)
+        },
+        activeInvested: activeInvested.toFixed(2),
+        todaysEarnings: todaysEarnings.toFixed(2),
+        investments: investments 
+      });
+    } catch (err) {
+      console.error('Error fetching fund summary:', err);
+      res.status(500).json({ success: false, message: 'Server error fetching fund summary' });
+    }
+  });
+
   router.post('/fund/invest', verifyToken, async (req, res) => {
     const { amount, planId, fundId, expected_revenue, days } = req.body;
     const targetPlanId = planId || fundId || 1;
@@ -368,24 +433,20 @@ function userRoutes(pool, verifyToken, upload) {
         return res.status(400).json({ success: false, message: 'Insufficient balance for this investment' });
       }
 
-      // Fetch plan name for the transaction record
       const [planRows] = await connection.query('SELECT plan_name FROM wealth_plans WHERE plan_id = ?', [targetPlanId]);
       const planName = planRows.length > 0 ? planRows[0].plan_name : `Plan #${targetPlanId}`;
 
-      // 1. Deduct balance from user
       await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [investAmount, req.user.id]);
 
       const calculatedRevenue = expected_revenue || (investAmount * 1.5);
       const durationDays = parseInt(days) || 3;
 
-      // 2. Insert into user_investments
       await connection.query(
         `INSERT INTO user_investments (user_id, plan_id, invested_amount, expected_revenue, status, started_at, ends_at) 
          VALUES (?, ?, ?, ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL ? DAY))`,
         [req.user.id, targetPlanId, investAmount, calculatedRevenue, durationDays]
       );
 
-      // 3. Insert transaction log with the EXACT investment amount and plan name
       try {
         await connection.query(
           `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
@@ -408,7 +469,7 @@ function userRoutes(pool, verifyToken, upload) {
     }
   });
 
-  // 8. DYNAMIC WEALTH PLANS API
+  // 8. DYNAMIC WEALTH PLANS & RECORDS API
   const getWealthPlansHandler = async (req, res) => {
     try {
       const [rows] = await pool.query('SELECT * FROM wealth_plans ORDER BY plan_id ASC');
@@ -439,56 +500,6 @@ function userRoutes(pool, verifyToken, upload) {
   router.get('/fund/records', verifyToken, getFundRecordsHandler);
   router.get('/fund/my-investments', verifyToken, getFundRecordsHandler);
   router.get('/fund/my-plans', verifyToken, getFundRecordsHandler);
-
-  router.post('/fund/invest', verifyToken, async (req, res) => {
-    const { amount, planId, fundId, expected_revenue, days } = req.body;
-    const targetPlanId = planId || fundId || 1;
-    const investAmount = parseFloat(amount);
-
-    if (!investAmount || investAmount <= 0) {
-      return res.status(400).json({ success: false, message: 'Invalid investment amount' });
-    }
-
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
-
-      const [userRows] = await connection.query('SELECT balance FROM users WHERE user_id = ? FOR UPDATE', [req.user.id]);
-      if (userRows.length === 0) {
-        await connection.rollback();
-        connection.release();
-        return res.status(404).json({ success: false, message: 'User not found' });
-      }
-
-      const currentBalance = parseFloat(userRows[0].balance);
-      if (currentBalance < investAmount) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({ success: false, message: 'Insufficient balance for this investment' });
-      }
-
-      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [investAmount, req.user.id]);
-
-      const calculatedRevenue = expected_revenue || (investAmount * 1.5);
-      const durationDays = parseInt(days) || 30;
-
-      await connection.query(
-        `INSERT INTO user_investments (user_id, plan_id, invested_amount, expected_revenue, status, started_at, ends_at) 
-         VALUES (?, ?, ?, ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL ? DAY))`,
-        [req.user.id, targetPlanId, investAmount, calculatedRevenue, durationDays]
-      );
-
-      await connection.commit();
-      connection.release();
-
-      res.json({ success: true, message: 'Investment submitted successfully!' });
-    } catch (err) {
-      await connection.rollback();
-      connection.release();
-      console.error('Fund invest error:', err);
-      res.status(500).json({ success: false, message: 'Server error processing investment' });
-    }
-  });
 
   return router;
 }
