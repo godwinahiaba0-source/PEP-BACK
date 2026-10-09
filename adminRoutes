@@ -326,7 +326,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       }
 
       // 3. Insert transaction log so it displays in user's accounting records
-      const title = type === 'add' ? 'Admin Balance Credit' : 'Admin Balance Deduction';
+      const title = type === 'add' ? 'Rewards' : 'Penalty';
       await connection.query(
         `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
          VALUES (?, ?, ?, ?, ?, 'Completed', NOW())`,
