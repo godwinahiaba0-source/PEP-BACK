@@ -364,6 +364,21 @@ function userRoutes(pool, verifyToken, upload) {
     }
   });
 
+  // 8. DYNAMIC WEALTH PLANS API
+  const getWealthPlansHandler = async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT * FROM wealth_plans ORDER BY plan_id ASC');
+      res.json({ success: true, data: rows, plans: rows });
+    } catch (err) {
+      console.error('Error fetching wealth plans:', err);
+      res.status(500).json({ success: false, message: 'Server error fetching wealth plans' });
+    }
+  };
+
+  router.get('/wealth-plans', verifyToken, getWealthPlansHandler);
+  router.get('/fund/plans', verifyToken, getWealthPlansHandler);
+  router.get('/plans', verifyToken, getWealthPlansHandler);
+
   const getFundRecordsHandler = async (req, res) => {
     try {
       const [rows] = await pool.query(
