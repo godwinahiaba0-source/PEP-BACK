@@ -220,12 +220,13 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       await connection.query('UPDATE withdrawals SET status = ? WHERE id = ?', [newStatus, transactionId]);
 
       if (action === 'reject') {
-        const refundAmount = parseFloat(tx.gross_amount || tx.amount || 0);
+        // Fix: correctly grab tx.amount so it refunds the actual amount requested
+        const refundAmount = parseFloat(tx.amount || tx.net_amount || 0);
         
         // 1. Refund the deducted amount back to user's balance
         await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [refundAmount, tx.user_id]);
 
-        // 2. Insert transaction log so it shows up in user's accounting records
+        // 2. Insert transaction log with the correct refund amount
         await connection.query(
           `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
            VALUES (?, ?, 'refund', 'withdrawal_refund', ?, 'Completed', NOW())`,
