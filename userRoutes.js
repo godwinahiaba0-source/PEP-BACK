@@ -388,6 +388,60 @@ function userRoutes(pool, verifyToken, upload) {
     }
   });
 
+  // 1. Get fund summary / active investments for the user
+router.get('/fund/summary', verifyToken, async (req, res) => {
+  try {
+    // Fetch user's investments and calculate metrics
+    const [investments] = await pool.query(
+      'SELECT * FROM user_investments WHERE user_id = ? ORDER BY started_at DESC', 
+      [req.user.id]
+    );
+    
+    // Also fetch user balance if stored in users table
+    const [users] = await pool.query(
+      'SELECT balance FROM users WHERE id = ?', 
+      [req.user.id]
+    );
+
+    res.json({ 
+      success: true, 
+      balance: users.length > 0 ? users[0].balance : 0,
+      investments: investments 
+    });
+  } catch (err) {
+    console.error('Error fetching fund summary:', err);
+    res.status(500).json({ success: false, message: 'Server error fetching fund summary' });
+  }
+});
+
+// 2. Handle creating a new investment
+router.post('/fund/invest', verifyToken, async (req, res) => {
+  try {
+    const { plan_id, invested_amount, expected_revenue, days } = req.body;
+    
+    // Calculate end date based on days (default to 3 days or plan duration)
+    const durationDays = parseInt(days) || 3;
+    const startedAt = new Date();
+    const endsAt = new Date();
+    endsAt.setDate(startedAt.getDate() + durationDays);
+
+    const [result] = await pool.query(
+      `INSERT INTO user_investments (user_id, plan_id, invested_amount, expected_revenue, status, started_at, ends_at) 
+       VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+      [req.user.id, plan_id, invested_amount, expected_revenue, startedAt, endsAt]
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Investment created successfully', 
+      investmentId: result.insertId 
+    });
+  } catch (err) {
+    console.error('Investment insert error:', err);
+    res.status(500).json({ success: false, message: 'Server error processing investment' });
+  }
+});
+
   router.post('/withdraw/request', verifyToken, handleWithdrawalRequest);
   router.post('/withdraw/submit', verifyToken, handleWithdrawalRequest);
   router.post('/user/withdraw', verifyToken, handleWithdrawalRequest);
