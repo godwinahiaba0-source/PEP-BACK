@@ -340,67 +340,81 @@ function userRoutes(pool, verifyToken, upload) {
   router.post('/user/withdraw', verifyToken, handleWithdrawalRequest);
   router.post('/wallet/withdraw', verifyToken, handleWithdrawalRequest);
 
-  // 7. FUND INVESTMENTS & RECORDS
-  router.post('/fund/invest', verifyToken, async (req, res) => {
-    const { amount, planId, fundId, expected_revenue, days } = req.body;
-    const targetPlanId = planId || fundId || 1;
-    const investAmount = parseFloat(amount);
-
-    if (!investAmount || investAmount <= 0) {
-      return res.status(400).json({ success: false, message: 'Invalid investment amount' });
-    }
-
-    const connection = await pool.getConnection();
+  // 1. Get fund summary / active investments for the user
+  router.get('/fund/summary', verifyToken, async (req, res) => {
     try {
-      await connection.beginTransaction();
+      const userId = req.user.id;
 
-      const [userRows] = await connection.query('SELECT balance FROM users WHERE user_id = ? FOR UPDATE', [req.user.id]);
-      if (userRows.length === 0) {
-        await connection.rollback();
-        connection.release();
-        return res.status(404).json({ success: false, message: 'User not found' });
-      }
-
-      const currentBalance = parseFloat(userRows[0].balance);
-      if (currentBalance < investAmount) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({ success: false, message: 'Insufficient balance for this investment' });
-      }
-
-      // 1. Deduct balance from user
-      await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [investAmount, req.user.id]);
-
-      const calculatedRevenue = expected_revenue || (investAmount * 1.5);
-      const durationDays = parseInt(days) || 30;
-
-      // 2. Insert into user_investments
-      await connection.query(
-        `INSERT INTO user_investments (user_id, plan_id, invested_amount, expected_revenue, status, started_at, ends_at) 
-         VALUES (?, ?, ?, ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL ? DAY))`,
-        [req.user.id, targetPlanId, investAmount, calculatedRevenue, durationDays]
+      // FIRST: Check and auto-settle any matured investments
+      const [maturedInvestments] = await pool.query(
+        'SELECT * FROM user_investments WHERE user_id = ? AND status = "active" AND ends_at <= NOW()',
+        [userId]
       );
 
-      // 3. Insert transaction log into transactions table safely
-      try {
-        await connection.query(
-          `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
-           VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-          [req.user.id, `Investment Plan #${targetPlanId}`, 'investment', 'investment_purchase', -investAmount, 'Completed']
-        );
-      } catch (txInsertErr) {
-        console.warn('Non-fatal: Failed to insert transaction record:', txInsertErr.message);
+      for (const inv of maturedInvestments) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+
+          await connection.query('UPDATE user_investments SET status = "completed" WHERE investment_id = ?', [inv.investment_id]);
+
+          const payout = parseFloat(inv.expected_revenue || 0);
+          await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [payout, userId]);
+
+          await connection.commit();
+          connection.release();
+        } catch (txErr) {
+          await connection.rollback();
+          connection.release();
+          console.error('Error settling matured investment:', txErr);
+        }
       }
 
-      await connection.commit();
-      connection.release();
+      // SECOND: Fetch updated investments
+      const [investments] = await pool.query(
+        `SELECT ui.*, COALESCE(wp.daily_profit_percentage, 2.00) AS daily_profit_percentage, COALESCE(wp.duration_days, 3) AS duration_days, COALESCE(wp.plan_name, 'Investment Plan') AS plan_name 
+         FROM user_investments ui 
+         LEFT JOIN wealth_plans wp ON ui.plan_id = wp.plan_id 
+         WHERE ui.user_id = ? ORDER BY ui.started_at DESC`, 
+        [userId]
+      );
+      
+      const [users] = await pool.query(
+        'SELECT balance FROM users WHERE user_id = ?', 
+        [userId]
+      );
 
-      res.json({ success: true, message: 'Investment submitted successfully!' });
+      // THIRD: Calculate active investments and daily earnings
+      let activeInvested = 0;
+      let todaysEarnings = 0;
+
+      investments.forEach(inv => {
+        if (inv.status && inv.status.toLowerCase() === 'active') {
+          const invested = parseFloat(inv.invested_amount || 0);
+          activeInvested += invested;
+
+          const profitPercent = parseFloat(inv.daily_profit_percentage) || 2.00;
+          const durationDays = parseInt(inv.duration_days) || 3;
+          
+          const totalProfit = invested * (profitPercent / 100);
+          todaysEarnings += totalProfit / durationDays;
+        }
+      });
+
+      res.json({ 
+        success: true, 
+        balance: users.length > 0 ? users[0].balance : 0,
+        summary: {
+          activeInvested: activeInvested.toFixed(2),
+          todaysEarnings: todaysEarnings.toFixed(2)
+        },
+        activeInvested: activeInvested.toFixed(2), // Top-level fallback
+        todaysEarnings: todaysEarnings.toFixed(2),     // Top-level fallback
+        investments: investments 
+      });
     } catch (err) {
-      await connection.rollback();
-      connection.release();
-      console.error('Fund invest error:', err);
-      res.status(500).json({ success: false, message: 'Server error processing investment' });
+      console.error('Error fetching fund summary:', err);
+      res.status(500).json({ success: false, message: 'Server error fetching fund summary' });
     }
   });
 
