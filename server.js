@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -24,6 +25,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-user-role', 'x-admin-override', 'token', 'x-auth-token']
 }));
 app.options('*', cors());
+
+// Ensure uploads directory exists on startup to prevent ENOENT crashes
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 // Static middleware with extensions enabled to hide .html
 app.use(express.static(path.join(__dirname, 'public'), {
