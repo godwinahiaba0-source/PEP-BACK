@@ -340,14 +340,14 @@ function userRoutes(pool, verifyToken, upload) {
   router.post('/user/withdraw', verifyToken, handleWithdrawalRequest);
   router.post('/wallet/withdraw', verifyToken, handleWithdrawalRequest);
 
-  // 1. Get fund summary / active investments for the user (with auto-settlement)
+  // 1. Get fund summary / active investments for the user (with accurate daily earnings)
   router.get('/fund/summary', verifyToken, async (req, res) => {
     try {
       const userId = req.user.id;
 
       // FIRST: Check and auto-settle any matured investments
       const [maturedInvestments] = await pool.query(
-        'SELECT * FROM user_investments WHERE user_id = ? AND status = "active" AND ends_at <= NOW()',
+        'SELECT ui.*, wp.duration_days FROM user_investments ui LEFT JOIN wealth_plans wp ON ui.plan_id = wp.plan_id WHERE ui.user_id = ? AND ui.status = "active" AND ui.ends_at <= NOW()',
         [userId]
       );
 
@@ -356,10 +356,8 @@ function userRoutes(pool, verifyToken, upload) {
         try {
           await connection.beginTransaction();
 
-          // Mark investment as completed
           await connection.query('UPDATE user_investments SET status = "completed" WHERE investment_id = ?', [inv.investment_id]);
 
-          // Credit expected revenue back to user balance
           const payout = parseFloat(inv.expected_revenue || 0);
           await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [payout, userId]);
 
@@ -372,9 +370,9 @@ function userRoutes(pool, verifyToken, upload) {
         }
       }
 
-      // SECOND: Fetch updated investments and user balance
+      // SECOND: Fetch updated investments and include duration_days from wealth_plans
       const [investments] = await pool.query(
-        `SELECT ui.*, wp.daily_profit_percentage, wp.plan_name 
+        `SELECT ui.*, wp.daily_profit_percentage, wp.duration_days, wp.plan_name 
          FROM user_investments ui 
          LEFT JOIN wealth_plans wp ON ui.plan_id = wp.plan_id 
          WHERE ui.user_id = ? ORDER BY ui.started_at DESC`, 
@@ -386,13 +384,17 @@ function userRoutes(pool, verifyToken, upload) {
         [userId]
       );
 
-      // Calculate today's earnings from active investments
+      // THIRD: Calculate accurate daily earnings (Total Profit / Duration Days)
       let todaysEarnings = 0;
       investments.forEach(inv => {
-        if (inv.status === 'active' && inv.daily_profit_percentage) {
+        if (inv.status === 'active' && inv.daily_profit_percentage && inv.duration_days) {
           const invested = parseFloat(inv.invested_amount || 0);
-          const dailyRate = parseFloat(inv.daily_profit_percentage) / 100;
-          todaysEarnings += invested * dailyRate;
+          const totalProfitPercent = parseFloat(inv.daily_profit_percentage) / 100;
+          const totalProfit = invested * totalProfitPercent;
+          const durationDays = parseInt(inv.duration_days) || 1;
+          
+          // Earning per day = Total Profit / Duration Days
+          todaysEarnings += totalProfit / durationDays;
         }
       });
 
