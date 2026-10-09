@@ -296,13 +296,19 @@ function userRoutes(pool, verifyToken, upload) {
 
   const handleWithdrawalRequest = async (req, res) => {
     const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber } = req.body;
+    const withdrawalAmount = parseFloat(amount);
+
+    // Enforce minimum withdrawal limit of 20 GHS
+    if (!withdrawalAmount || withdrawalAmount < 20) {
+      return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 20.00 GHS.' });
+    }
     
     try {
       const [userRows] = await pool.query('SELECT balance FROM users WHERE user_id = ?', [req.user.id]);
       if (userRows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
       
       const currentBalance = userRows[0].balance;
-      const totalDeduction = parseFloat(amount);
+      const totalDeduction = withdrawalAmount;
 
       if (currentBalance < totalDeduction) {
         return res.status(400).json({ success: false, message: 'Insufficient balance for withdrawal' });
@@ -315,7 +321,7 @@ function userRoutes(pool, verifyToken, upload) {
         await connection.query('UPDATE users SET balance = balance - ? WHERE user_id = ?', [totalDeduction, req.user.id]);
         await connection.query(
           'INSERT INTO withdrawals (user_id, amount, fee, net_amount, method, account_info, status, created_at) VALUES (?, ?, ?, ?, ?, ?, "pending", NOW())',
-          [req.user.id, amount, handlingFee || 0, netAmountToReceive || amount, method || 'Bank', accountNumber || accountDetails || '']
+          [req.user.id, withdrawalAmount, handlingFee || 0, netAmountToReceive || withdrawalAmount, method || 'Bank', accountNumber || accountDetails || '']
         );
 
         await connection.commit();
@@ -328,6 +334,7 @@ function userRoutes(pool, verifyToken, upload) {
         throw txErr;
       }
     } catch (err) {
+      console.error('Withdrawal error:', err);
       res.status(500).json({ success: false, message: 'Server error processing withdrawal' });
     }
   };
