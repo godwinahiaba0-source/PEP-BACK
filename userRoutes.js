@@ -327,10 +327,18 @@ function userRoutes(pool, verifyToken, upload) {
     }
     
     try {
-      const [userRows] = await pool.query('SELECT balance, fund_password FROM users WHERE user_id = ?', [req.user.id]);
-      if (userRows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
+      // Check user balance, fund password, and withdrawal enablement status
+      const [userRows] = await pool.query('SELECT balance, fund_password, withdrawals_enabled, is_deleted FROM users WHERE user_id = ?', [req.user.id]);
+      if (userRows.length === 0 || userRows[0].is_deleted === 1) {
+        return res.status(403).json({ success: false, message: 'Account not active' });
+      }
       
       const user = userRows[0];
+      
+      if (user.withdrawals_enabled === 0) {
+        return res.status(400).json({ success: false, message: 'withdrawal function not enabled' });
+      }
+
       const currentBalance = user.balance;
       const totalDeduction = withdrawalAmount;
 
