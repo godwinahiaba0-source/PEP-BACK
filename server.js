@@ -26,7 +26,7 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-// Ensure uploads directory exists on startup to prevent ENOENT crashes
+// Ensure absolute uploads directory exists on startup to prevent ENOENT crashes
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -37,8 +37,11 @@ app.use(express.static(path.join(__dirname, 'public'), {
   extensions: ['html', 'htm']
 }));
 
-// Define MIME type for Apple configuration profiles (.mobileconfig)[cite: 14]
+// Define MIME type for Apple configuration profiles (.mobileconfig)
 express.static.mime.define({'application/x-apple-aspen-config': ['mobileconfig']});
+
+// Serve uploaded files publicly using absolute path
+app.use('/uploads', express.static(uploadDir));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -51,13 +54,12 @@ const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
+  destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 const upload = multer({ storage: storage });
 
 app.use(express.json());
-app.use('/uploads', express.static('uploads'));
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
