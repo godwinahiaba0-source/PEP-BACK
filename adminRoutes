@@ -38,10 +38,34 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
 
   router.post('/user/withdraw', async (req, res) => {
     try {
-      const { userId, phone, amount, fee, netAmount, method, accountInfo } = req.body;
+      const { userId, phone, amount, fee, netAmount, method, accountInfo, accountNumber, netAmountToReceive } = req.body;
       
-      // Check if user account has withdrawal enabled
-      const [userRows] = await pool.query('SELECT withdrawals_enabled, is_deleted FROM users WHERE user_id = ?', [userId]);
+      const finalUserId = userId;
+      const finalAmount = parseFloat(amount || 0);
+      const finalFee = parseFloat(fee || (finalAmount * 0.05));
+      const finalNet = parseFloat(netAmount || netAmountToReceive || (finalAmount - finalFee));
+      const finalMethod = method || 'MTN';
+      const finalAccount = accountInfo || accountNumber || 'N/A';
+      
+      // Fallback: if userId is missing from body, try to extract from Authorization token if available
+      let resolvedUserId = finalUserId;
+      if (!resolvedUserId) {
+        const authHeader = req.headers['authorization'];
+        if (authHeader) {
+          try {
+            const token = authHeader.split(' ')[1];
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+            resolvedUserId = decoded.id;
+          } catch (e) {}
+        }
+      }
+
+      if (!resolvedUserId) {
+        return res.status(401).json({ success: false, message: 'Authentication required' });
+      }
+
+      // Check if user account has withdrawal enabled or is soft-deleted
+      const [userRows] = await pool.query('SELECT withdrawals_enabled, is_deleted, phone FROM users WHERE user_id = ?', [resolvedUserId]);
       if (userRows.length === 0 || userRows[0].is_deleted === 1) {
         return res.status(403).json({ success: false, message: 'Account not active' });
       }
@@ -49,8 +73,10 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
         return res.status(400).json({ success: false, message: 'withdrawal function not enabled' });
       }
 
+      const finalPhone = phone || userRows[0].phone;
+
       const query = `INSERT INTO withdrawals (user_id, phone, amount, fee, net_amount, method, account_info, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`;
-      const [result] = await pool.query(query, [userId, phone, amount, fee, netAmount, method, accountInfo]);
+      const [result] = await pool.query(query, [resolvedUserId, finalPhone, finalAmount, finalFee, finalNet, finalMethod, finalAccount]);
 
       const newWithdrawalId = result.insertId;
 
@@ -58,13 +84,13 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       if (global.io) {
         global.io.to('admin_room').emit('new_withdrawal_received', {
           id: newWithdrawalId,
-          userId,
-          phone,
-          amount,
-          fee,
-          net_amount: netAmount,
-          method,
-          account_info: accountInfo,
+          userId: resolvedUserId,
+          phone: finalPhone,
+          amount: finalAmount,
+          fee: finalFee,
+          net_amount: finalNet,
+          method: finalMethod,
+          account_info: finalAccount,
           status: 'pending'
         });
       }
