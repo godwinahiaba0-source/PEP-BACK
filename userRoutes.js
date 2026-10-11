@@ -245,7 +245,7 @@ function userRoutes(pool, verifyToken, upload) {
         usdtAddress: process.env.USDT_WALLET_ADDRESS || 'TByjYGQHM4H29bngfATXPyQSepdfSKEABn',
         kbNumber: process.env.KB_NUMBER || '0599432374',
         kbName: process.env.KB_NAME || 'MATHIAS KOFI LUMOR',
-        solNumber: process.env.SOL_NUMBER || '05O4387431',
+        solNumber: process.env.SOL_NUMBER || '0504387431',
         solName: process.env.SOL_NAME || 'GODWIN K. TIMOTHY AHIABA'
       });
     } catch (err) {
