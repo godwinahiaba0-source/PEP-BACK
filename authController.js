@@ -144,7 +144,7 @@ const login = async (req, res, db, JWT_SECRET) => {
 
         // Block login if account has been soft-deleted
         if (user.is_deleted === 1) {
-            return res.status(403).json({ success: false, message: 'This account has been deleted.' });
+            return res.status(403).json({ success: false, message: 'User does not exist.' });
         }
 
         const isMatch = await bcrypt.compare(password, user.password_hash);
