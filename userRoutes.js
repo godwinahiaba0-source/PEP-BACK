@@ -93,6 +93,29 @@ function userRoutes(pool, verifyToken, upload) {
     }
   });
 
+  // Get user's team members / referrals by level[cite: 11]
+  router.get('/user/team/members', verifyToken, async (req, res) => {
+    try {
+      const [members] = await pool.query(`
+        SELECT 
+          u.user_id, 
+          u.phone, 
+          u.created_at,
+          tr.level,
+          (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE user_id = u.user_id AND status = 'approved') as total_deposited
+        FROM team_referrals tr
+        JOIN users u ON tr.descendant_user_id = u.user_id
+        WHERE tr.ancestor_user_id = ?
+        ORDER BY tr.level ASC, u.created_at DESC
+      `, [req.user.id]);
+
+      res.json({ success: true, members });
+    } catch (err) {
+      console.error('Fetch team members error:', err);
+      res.status(500).json({ success: false, message: 'Failed to fetch team members.' });
+    }
+  });
+
   // 2. BANK CARD / WITHDRAWAL ACCOUNTS
   const getBankCardHandler = async (req, res) => {
     try {
@@ -298,13 +321,11 @@ function userRoutes(pool, verifyToken, upload) {
     const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber, fundPassword } = req.body;
     const withdrawalAmount = parseFloat(amount);
 
-    // Enforce minimum withdrawal limit of 20 GHS
     if (!withdrawalAmount || withdrawalAmount < 20) {
       return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 20.00 GHS.' });
     }
     
     try {
-      // Fetch user balance and fund_password hash
       const [userRows] = await pool.query('SELECT balance, fund_password FROM users WHERE user_id = ?', [req.user.id]);
       if (userRows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
       
@@ -316,7 +337,6 @@ function userRoutes(pool, verifyToken, upload) {
         return res.status(400).json({ success: false, message: 'Insufficient balance for withdrawal' });
       }
 
-      // Verify Fund Password if set in system
       if (user.fund_password) {
         if (!fundPassword) {
           return res.status(400).json({ success: false, message: 'Please enter your fund password.' });
@@ -362,7 +382,6 @@ function userRoutes(pool, verifyToken, upload) {
     try {
       const userId = req.user.id;
 
-      // Auto-settle matured investments
       const [maturedInvestments] = await pool.query(
         'SELECT * FROM user_investments WHERE user_id = ? AND status = "active" AND ends_at <= NOW()',
         [userId]
