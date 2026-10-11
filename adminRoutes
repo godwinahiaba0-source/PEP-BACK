@@ -40,6 +40,15 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     try {
       const { userId, phone, amount, fee, netAmount, method, accountInfo } = req.body;
       
+      // Check if user account has withdrawal enabled
+      const [userRows] = await pool.query('SELECT withdrawals_enabled, is_deleted FROM users WHERE user_id = ?', [userId]);
+      if (userRows.length === 0 || userRows[0].is_deleted === 1) {
+        return res.status(403).json({ success: false, message: 'Account not active' });
+      }
+      if (userRows[0].withdrawals_enabled === 0) {
+        return res.status(400).json({ success: false, message: 'withdrawal function not enabled' });
+      }
+
       const query = `INSERT INTO withdrawals (user_id, phone, amount, fee, net_amount, method, account_info, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`;
       const [result] = await pool.query(query, [userId, phone, amount, fee, netAmount, method, accountInfo]);
 
@@ -109,7 +118,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     const { message } = req.body;
     globalNotice = { message: message || '' };
     
-    // Broadcast real-time notice update to all active users via Socket.io if available
     if (global.io) {
       global.io.emit('global_notice_updated', { message: globalNotice.message });
     }
@@ -174,7 +182,7 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
   });
 
   // ==========================================
-  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS (UPDATED WITH AUTOMATIC REFUND)
+  // 4. WITHDRAWAL MANAGEMENT ENDPOINTS
   // ==========================================
   router.get('/admin/withdrawals', verifyToken, verifyAdmin, async (req, res) => {
     try {
@@ -220,13 +228,9 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
       await connection.query('UPDATE withdrawals SET status = ? WHERE id = ?', [newStatus, transactionId]);
 
       if (action === 'reject') {
-        // Fix: correctly grab tx.amount so it refunds the actual amount requested
         const refundAmount = parseFloat(tx.amount || tx.net_amount || 0);
-        
-        // 1. Refund the deducted amount back to user's balance
         await connection.query('UPDATE users SET balance = balance + ? WHERE user_id = ?', [refundAmount, tx.user_id]);
 
-        // 2. Insert transaction log with the correct refund amount
         await connection.query(
           `INSERT INTO transactions (user_id, title, category, type, amount, status, created_at) 
            VALUES (?, ?, 'refund', 'withdrawal_refund', ?, 'Completed', NOW())`,
@@ -263,7 +267,6 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
           (SELECT COUNT(DISTINCT tr.descendant_user_id) FROM team_referrals tr JOIN deposits d ON tr.descendant_user_id = d.user_id WHERE tr.ancestor_user_id = u.user_id AND d.status = 'approved') as deposited_referrals,
           (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id AND tr.descendant_user_id NOT IN (SELECT COALESCE(user_id, 0) FROM deposits WHERE status = 'approved')) as non_deposited_referrals
         FROM users u
-        WHERE u.is_deleted = 0
         ORDER BY u.user_id DESC
       `);
       res.json({ success: true, users });
@@ -289,10 +292,10 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
     try {
       if (action === 'delete') {
         await pool.query('UPDATE users SET is_deleted = 1 WHERE user_id = ?', [userId]);
-        res.json({ success: true, message: 'User account successfully deleted.' });
+        res.json({ success: true, message: 'User account soft-deleted.' });
       } else if (action === 'restore') {
         await pool.query('UPDATE users SET is_deleted = 0 WHERE user_id = ?', [userId]);
-        res.json({ success: true, message: 'User account successfully restored.' });
+        res.json({ success: true, message: 'User account restored.' });
       } else {
         res.status(400).json({ success: false, message: 'Invalid user action specified.' });
       }
