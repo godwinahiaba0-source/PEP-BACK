@@ -100,6 +100,7 @@ function userRoutes(pool, verifyToken, upload) {
         SELECT 
           u.user_id, 
           u.phone, 
+          u.vip_level,
           u.created_at,
           tr.level,
           (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE user_id = u.user_id AND status = 'approved') as total_deposited
