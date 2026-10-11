@@ -37,6 +37,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
   extensions: ['html', 'htm']
 }));
 
+// Define MIME type for Apple configuration profiles (.mobileconfig)[cite: 14]
+express.static.mime.define({'application/x-apple-aspen-config': ['mobileconfig']});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' }
