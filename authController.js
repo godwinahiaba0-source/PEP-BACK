@@ -150,7 +150,7 @@ const login = async (req, res, db, JWT_SECRET) => {
         const isMatch = await bcrypt.compare(password, user.password_hash);
         if (!isMatch) return res.status(400).json({ success: false, message: 'Invalid phone or password' });
 
-        const token = jwt.sign({ id: user.user_id, phone: user.phone }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user.user_id, phone: user.phone }, JWT_SECRET, { expiresIn: '1h' });
         res.json({ success: true, token, referralCode: user.referral_code });
     } catch (err) {
         console.error(err);
