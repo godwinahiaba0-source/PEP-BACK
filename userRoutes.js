@@ -322,8 +322,8 @@ function userRoutes(pool, verifyToken, upload) {
     const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber, fundPassword } = req.body;
     const withdrawalAmount = parseFloat(amount);
 
-    if (!withdrawalAmount || withdrawalAmount < 20) {
-      return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 20.00 GHS.' });
+    if (!withdrawalAmount || withdrawalAmount < 50) {
+      return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 50.00 GHS.' });
     }
     
     try {
