@@ -289,10 +289,12 @@ module.exports = function(pool, verifyToken, verifyAdmin, bcrypt) {
           u.vip_level, 
           u.withdrawals_enabled,
           u.is_deleted,
+          COALESCE(inviter.phone, 'Direct / None') as invited_by_phone,
           (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id) as total_referrals,
           (SELECT COUNT(DISTINCT tr.descendant_user_id) FROM team_referrals tr JOIN deposits d ON tr.descendant_user_id = d.user_id WHERE tr.ancestor_user_id = u.user_id AND d.status = 'approved') as deposited_referrals,
           (SELECT COUNT(*) FROM team_referrals tr WHERE tr.ancestor_user_id = u.user_id AND tr.descendant_user_id NOT IN (SELECT COALESCE(user_id, 0) FROM deposits WHERE status = 'approved')) as non_deposited_referrals
         FROM users u
+        LEFT JOIN users inviter ON u.invited_by = inviter.user_id
         ORDER BY u.user_id DESC
       `);
       res.json({ success: true, users });
