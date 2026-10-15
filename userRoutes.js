@@ -243,8 +243,8 @@ function userRoutes(pool, verifyToken, upload) {
         success: true,
         exchangeRate: 12.5,
         usdtAddress: process.env.USDT_WALLET_ADDRESS || 'TByjYGQHM4H29bngfATXPyQSepdfSKEABn',
-        kbNumber: process.env.KB_NUMBER || '0599432374',
-        kbName: process.env.KB_NAME || 'MATHIAS KOFI LUMOR',
+        kbNumber: process.env.KB_NUMBER || '0534964082',
+        kbName: process.env.KB_NAME || 'GODWIN AHIABA',
         solNumber: process.env.SOL_NUMBER || '0504387431',
         solName: process.env.SOL_NAME || 'GODWIN K. TIMOTHY AHIABA'
       });
