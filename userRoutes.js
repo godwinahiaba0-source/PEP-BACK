@@ -339,15 +339,6 @@ function userRoutes(pool, verifyToken, upload) {
         return res.status(400).json({ success: false, message: 'withdrawal function not enabled' });
       }
 
-      // Check if user has already made a withdrawal request today (One per day limit)
-      const [todayWithdrawals] = await pool.query(
-        'SELECT id FROM withdrawals WHERE user_id = ? AND DATE(created_at) = CURDATE() LIMIT 1',
-        [req.user.id]
-      );
-      if (todayWithdrawals.length > 0) {
-        return res.status(400).json({ success: false, message: 'You can only make one withdrawal request per day. Please try again tomorrow.' });
-      }
-
       // ==========================================
       // PROGRESSIVE WITHDRAWAL TIER CHECKS
       // ==========================================
