@@ -322,8 +322,8 @@ function userRoutes(pool, verifyToken, upload) {
     const { amount, handlingFee, netAmountToReceive, method, accountDetails, accountNumber, fundPassword } = req.body;
     const withdrawalAmount = parseFloat(amount);
 
-    if (!withdrawalAmount || withdrawalAmount < 20) {
-      return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is 20.00 GHS.' });
+    if (!withdrawalAmount || isNaN(withdrawalAmount)) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid withdrawal amount.' });
     }
     
     try {
@@ -347,6 +347,48 @@ function userRoutes(pool, verifyToken, upload) {
       if (todayWithdrawals.length > 0) {
         return res.status(400).json({ success: false, message: 'You can only make one withdrawal request per day. Please try again tomorrow.' });
       }
+
+      // ==========================================
+      // PROGRESSIVE WITHDRAWAL TIER CHECKS
+      // ==========================================
+      const [countRows] = await pool.query(
+        'SELECT COUNT(*) as successCount FROM withdrawals WHERE user_id = ? AND status = "approved"',
+        [req.user.id]
+      );
+      const successfulCount = countRows[0].successCount || 0;
+
+      let minLimit = 0;
+      let maxLimit = Infinity;
+
+      if (successfulCount === 0) {
+        minLimit = 20; maxLimit = 45;
+      } else if (successfulCount === 1) {
+        minLimit = 50; maxLimit = 120;
+      } else if (successfulCount === 2) {
+        minLimit = 150; maxLimit = 250;
+      } else if (successfulCount === 3) {
+        minLimit = 300; maxLimit = 450;
+      } else if (successfulCount === 4) {
+        minLimit = 500; maxLimit = 750;
+      } else if (successfulCount === 5) {
+        minLimit = 800; maxLimit = 900;
+      } else if (successfulCount === 6) {
+        minLimit = 1000; maxLimit = 1450;
+      } else if (successfulCount === 7) {
+        minLimit = 1500; maxLimit = 2000;
+      } else {
+        // 8th time and beyond: min exceeds 1500 (i.e. 1501+), no maximum limit
+        minLimit = 1501;
+        maxLimit = Infinity;
+      }
+
+      if (withdrawalAmount < minLimit || (maxLimit !== Infinity && withdrawalAmount > maxLimit)) {
+        const errorMsg = maxLimit === Infinity
+          ? `For withdrawal #${successfulCount + 1}, the minimum amount is GH₵ ${minLimit} (No maximum limit).`
+          : `For withdrawal #${successfulCount + 1}, the allowed range is GH₵ ${minLimit} to GH₵ ${maxLimit}.`;
+        return res.status(400).json({ success: false, message: errorMsg });
+      }
+      // ==========================================
 
       const currentBalance = user.balance;
       const totalDeduction = withdrawalAmount;
